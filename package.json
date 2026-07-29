@@ -1,5 +1,5 @@
 {
-  "name": "qa-intelligence-agent",
+  "name": "qa-agent",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,12 +9,24 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "docx": "^9.7.1",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
+    "mysql2": "^3.23.2",
     "next": "16.2.12",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.22.0",
+    "playwright": "^1.62.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
