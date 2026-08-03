@@ -1,7 +1,6 @@
 import path from "node:path";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
 
 const MAX_CHARS = 60_000;
@@ -15,6 +14,15 @@ function truncate(text: string): string {
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
+  // Dynamic import, not a static top-level one: pdf-parse pulls in
+  // pdfjs-dist, which references DOMMatrix (a browser API) at module
+  // evaluation time for its optional canvas-rendering path. That reference
+  // is undefined on Vercel's serverless Node runtime specifically (not
+  // reproduced in local `next build && next start`) — with a static import,
+  // this crashed the *entire* module graph on load, meaning every chat
+  // message failed immediately, not just ones touching a PDF. Deferring the
+  // import to here means only an actual PDF extraction attempt can hit it.
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();

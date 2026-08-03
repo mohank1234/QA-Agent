@@ -139,6 +139,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatDisabled, setChatDisabled] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,7 +194,10 @@ export default function Home() {
     if (!selectedProjectId) return;
     fetch(`/api/chat?projectId=${selectedProjectId}`)
       .then((r) => r.json())
-      .then((data) => setMessages(data.messages ?? []))
+      .then((data) => {
+        setMessages(data.messages ?? []);
+        setChatDisabled(!!data.chatDisabled);
+      })
       .catch(() => setError("Could not reach the server to load chat history."));
     fetch(`/api/documents?projectId=${selectedProjectId}`)
       .then((r) => r.json())
@@ -634,6 +638,28 @@ export default function Home() {
         {sessionStatus !== "loading" && !session?.user && selectedProject?.expires_at && (
           <GuestExpiryBanner expiresAt={selectedProject.expires_at} />
         )}
+        {selectedProjectId && chatDisabled && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              flexWrap: "wrap",
+              padding: "10px 20px",
+              background: "#374151",
+              color: "#fff",
+              fontSize: 13,
+              textAlign: "center",
+            }}
+          >
+            <span>
+              AI chat is disabled on this hosted site to keep it free to run — run the project
+              locally to chat (it uses your own <code>claude login</code> session). Everything
+              else here works normally.
+            </span>
+          </div>
+        )}
         {!selectedProject ? (
           <div style={{ margin: "auto", textAlign: "center", color: "var(--app-text-dim)" }}>
             <div>Create or select a project to start.</div>
@@ -802,7 +828,12 @@ export default function Home() {
                         sendMessage(chatInput.trim());
                       }
                     }}
-                    placeholder="Ask it to analyze a document, generate test cases, build a benchmark dataset…"
+                    disabled={chatDisabled}
+                    placeholder={
+                      chatDisabled
+                        ? "Chat is disabled on this hosted site — run the project locally to chat."
+                        : "Ask it to analyze a document, generate test cases, build a benchmark dataset…"
+                    }
                     rows={2}
                     style={{
                       flex: 1,
@@ -813,19 +844,20 @@ export default function Home() {
                       background: "var(--app-panel)",
                       color: "var(--app-text)",
                       fontSize: 14,
+                      opacity: chatDisabled ? 0.6 : 1,
                     }}
                   />
                   <button
                     onClick={() => sendMessage(chatInput.trim())}
-                    disabled={sending || !chatInput.trim()}
+                    disabled={sending || !chatInput.trim() || chatDisabled}
                     style={{
                       padding: "0 20px",
                       borderRadius: 8,
                       border: "none",
                       background: "var(--app-accent)",
                       color: "var(--app-accent-text)",
-                      cursor: sending ? "default" : "pointer",
-                      opacity: sending || !chatInput.trim() ? 0.6 : 1,
+                      cursor: sending || chatDisabled ? "default" : "pointer",
+                      opacity: sending || !chatInput.trim() || chatDisabled ? 0.6 : 1,
                       fontSize: 14,
                     }}
                   >

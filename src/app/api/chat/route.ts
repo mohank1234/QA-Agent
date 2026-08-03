@@ -6,6 +6,16 @@ import { checkRateLimit, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 import { logger } from "@/lib/logger";
 import { trackEvent } from "@/lib/analytics";
 
+// Chat is deliberately kept off the deployed site: it's billed per-call via
+// the Claude API, and the whole point of running this app on Vercel is to
+// stay at $0. Locally it works for free by picking up this machine's
+// `claude login` session instead. Vercel sets VERCEL=1 in every one of its
+// environments (production, preview, even `vercel dev`), which makes it the
+// right switch here — this is not a general "are we in production" check.
+const CHAT_DISABLED_ON_DEPLOYED_SITE = process.env.VERCEL === "1";
+const CHAT_DISABLED_MESSAGE =
+  "AI chat is disabled on the hosted site to keep this project free to run — it's only available when you run the app locally (it uses your own `claude login` session). Everything else here works normally.";
+
 // A real agent turn commonly takes well past Vercel's default serverless
 // timeout (10s on Hobby without Fluid Compute) — this app has seen turns
 // take 25-50+ seconds in testing. Requests the max Vercel allows for the
@@ -17,7 +27,10 @@ export async function GET(req: Request) {
   const projectId = searchParams.get("projectId");
   const access = await requireProjectAccess(projectId);
   if (!access.ok) return access.response;
-  return NextResponse.json({ messages: await listMessages(projectId!) });
+  return NextResponse.json({
+    messages: await listMessages(projectId!),
+    chatDisabled: CHAT_DISABLED_ON_DEPLOYED_SITE,
+  });
 }
 
 const MAX_MESSAGE_CHARS = 20_000;
@@ -29,6 +42,10 @@ export async function POST(req: Request) {
 
   const access = await requireProjectAccess(typeof projectId === "string" ? projectId : null);
   if (!access.ok) return access.response;
+
+  if (CHAT_DISABLED_ON_DEPLOYED_SITE) {
+    return NextResponse.json({ error: CHAT_DISABLED_MESSAGE, disabled: true }, { status: 503 });
+  }
 
   // Each turn is a real, billed Claude API call — worth limiting even for an
   // authenticated user, so one runaway client/script can't rack up cost.
