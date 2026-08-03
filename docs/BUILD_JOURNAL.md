@@ -525,13 +525,30 @@ something" half.
 - **File storage now runs entirely on Cloudflare R2** — local disk is no
   longer used for anything (`paths.ts` was deleted). The bucket is currently
   empty (test data cleaned up after verification, same as the database).
-- Google OAuth and Resend aren't configured — email/password login works
-  fully; Google sign-in and real reset emails are inactive until those keys
-  are added to `.env.local`.
-- **Sentry and PostHog are wired in and tested (graceful no-op confirmed)
-  but not yet configured** — no `SENTRY_DSN`/`POSTHOG_API_KEY` in
-  `.env.local` yet, so nothing is actually being reported/tracked anywhere
-  right now. Adding real values needs no further code changes.
+- **All four credential-gated integrations are now configured and verified
+  live, not just wired.** Real keys landed in `.env.local` in one batch;
+  each was independently confirmed actually working, not just "no errors on
+  boot":
+  - **Google OAuth**: `/api/auth/providers` lists it correctly, and driving
+    the real sign-in POST through to completion produces a genuine redirect
+    to `accounts.google.com` with our real `client_id` and the correct
+    `redirect_uri` embedded — checked the actual URL, not just a 200.
+  - **Resend**: first test used a fake `@example.com` recipient, which
+    Resend's sandbox mode correctly rejected (422) — informative rather than
+    a failure, since it confirms the API key itself authenticated correctly
+    (an invalid key fails before recipient validation ever runs), *and*
+    confirms the graceful-degrade path works (still returned 200 to the
+    client, logged the reset link instead of crashing). Re-ran against a
+    real deliverable address and got a clean send with no error logged.
+  - **Sentry**: `Sentry.flush()` returned `true` after a real
+    `captureException` call — confirms the event actually transmitted to
+    Sentry's servers, not just that `.init()` didn't throw.
+  - **PostHog**: a direct `capture()` + `shutdown()` completed without
+    throwing (posthog-node throws on a failed flush), confirming real event
+    delivery.
+  
+  All test accounts/events cleaned up afterward, consistent with every
+  other verification pass in this project.
 - **Verified deployable to Vercel** — a real `npm run build` + `npm run
   start` both succeed against the production build specifically (not just
   `next dev`). `run_browser_test` correctly degrades to text-only when
