@@ -475,9 +475,97 @@ already fully wired and tested end-to-end structurally (graceful no-op
 confirmed), just waiting on real keys to verify the "actually reports/tracks
 something" half.
 
+### Step 8: Real Vercel deployment — three bugs a clean local build never showed
+
+`npm run build && npm run start` had already passed locally (Step 7), but
+that only proves the code runs correctly *on this machine*. Actually
+deploying to Vercel — via CLI (`vercel link` + `vercel env add` for every
+credential + `vercel deploy --prod`) — surfaced three real bugs, each found
+by hitting the live URL and reading `npx vercel logs <url>` (the browser
+only ever showed a generic 500 page; production mode hides error detail from
+the client, so the logs command was the only way to see what actually
+failed).
+
+1. **`ReferenceError: DOMMatrix is not defined`, killing every single
+   `/api/chat` call, not just PDF ones.** `pdf-parse` pulls in `pdfjs-dist`,
+   which references `DOMMatrix` — a browser API — unconditionally at
+   *module-evaluation time* for an optional canvas-rendering path. That's
+   undefined on Vercel's serverless Node runtime specifically (never
+   reproduced locally, including in `next start`). Because
+   `readDocument.ts` had a static top-level `import { PDFParse } from
+   "pdf-parse"`, and every `/api/chat` request imports `agentTools.ts` →
+   `readDocument.ts`, the crash happened on module load — before any
+   PDF was even involved. Fixed by moving the import to a dynamic
+   `import()` inside `extractPdf()`, so only an actual PDF-extraction
+   attempt can reach it.
+2. **"Native CLI binary for linux-x64 not found."** The Claude Agent SDK
+   ships its real CLI as a platform-specific optional-dependency package
+   (`@anthropic-ai/claude-agent-sdk-linux-x64`) and resolves which one to
+   load at *runtime* based on `process.platform`/`process.arch`. Two
+   separate build-system problems, needing two separate fixes:
+   - Next's bundler was rewriting the SDK's own `require()` calls, so
+     `serverExternalPackages: ["@anthropic-ai/claude-agent-sdk"]` was needed
+     to make Next call it via plain Node `require()` instead of bundling it.
+   - That alone didn't fix it — `@vercel/nft`'s static file-tracing (which
+     decides what actually gets copied into the deployed function) can't
+     follow a `process.platform`-based `require()` and was silently omitting
+     the binary package entirely, so it was installed during the build but
+     never shipped. Fixed with an explicit
+     `outputFileTracingIncludes: { "/api/chat": ["node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**/*"] }`
+     in `next.config.ts`. Found by reading Next's own bundled docs on that
+     option rather than guessing twice.
+3. **"Not logged in · Please run /login"**, then, once `ANTHROPIC_API_KEY`
+   was added, **"Credit balance is too low."** Locally the SDK authenticates
+   via this machine's own `claude login` session; Vercel's serverless
+   functions have no such session and need `ANTHROPIC_API_KEY` instead —
+   already documented in `.env.example` from earlier in the project. Once
+   added, the error changed from "not logged in" to "credit balance too
+   low," confirming the entire pipeline now worked end-to-end (binary found
+   → executed → authenticated → reached the real Anthropic API) — the only
+   remaining gap was that the API account behind that key had no funded
+   balance.
+
+**The actual decision at that point wasn't to fund the key.** The explicit
+goal for this whole deployment has been to stay at $0, and the Anthropic API
+console has no ongoing free tier — it's prepaid, pay-per-use, unlike a
+Claude.ai Pro/Max subscription (a separate product that can't power API
+calls). Rather than add billing, chat was deliberately disabled on the
+*hosted* site instead:
+
+- `/api/chat` checks `process.env.VERCEL` (set automatically in every Vercel
+  environment — production, preview, even `vercel dev`) and returns a clear
+  message instead of attempting a call, before it would ever reach the SDK.
+- The frontend shows a banner and disables the chat input/send button when
+  the server reports this, rather than only surfacing it as an error after a
+  user tries to send a message — same "make it visible, not just handled"
+  approach as the guest-expiry banner.
+- `ANTHROPIC_API_KEY` was removed from both Vercel (`vercel env rm`, all
+  three environments) and `.env.local` — it's unused now, and its earlier
+  presence in `.env.local` had a real side effect worth remembering below.
+- Locally, chat is untouched and keeps working for free — `VERCEL` is never
+  set outside an actual Vercel environment, so the gate never triggers there,
+  and the SDK falls back to the `claude login` session same as always.
+  Verified explicitly after removing the key: a fresh chat message against a
+  local project still got a real reply.
+
+**A subtler bug caught along the way, worth remembering**: the Claude Agent
+SDK spawns the actual `claude` CLI as a child process, which inherits
+`process.env` by default. Once `ANTHROPIC_API_KEY` was sitting in
+`.env.local` for the Vercel fix, it wasn't just visible to the deployed
+app — it was also visible to every *local* `npm run dev` process, and the
+CLI child process picks an env var API key over the free login session if
+both are present. So the same key that was meant to fix production would
+have quietly started billing local development too, the moment local
+testing touched chat again. Removing it from `.env.local` (not just from
+Vercel) was necessary, not just tidy.
+
 ### Not started yet
 
 - Background jobs (Inngest) — deferred, no concrete need identified yet
+- AI chat on the hosted Vercel site — deliberately off, not forgotten (see
+  Step 8). Turning it on later just means adding a funded
+  `ANTHROPIC_API_KEY` back to Vercel; no code changes needed, the gate reads
+  live off `process.env.VERCEL` with no separate feature flag to flip.
 
 ---
 
@@ -507,21 +595,43 @@ something" half.
   unauthenticated 401s, file upload/download), not just "it compiles." Test
   data was always cleaned up afterward, with real project data explicitly
   re-verified to survive every migration.
+- **A clean local production build (`next build && next start`) is not the
+  same as a clean deployment.** All three Step 8 bugs — a browser-only API
+  reference, a runtime-resolved native binary Vercel's file tracer couldn't
+  see, and a billing account with no funds — only showed up by actually
+  deploying and hitting the live URL. When the client only shows a generic
+  500, `npx vercel logs <url>` is the way to see what actually failed
+  server-side.
+- **A child process inherits the whole parent environment by default.** The
+  Claude Agent SDK spawns its CLI as a child process; putting
+  `ANTHROPIC_API_KEY` in `.env.local` to fix Vercel meant it was also live
+  for every local `npm run dev` process, and API-key auth wins over a free
+  `claude login` session when both are present — silently turning local
+  development into a billed activity too. Scoped env vars matter even
+  within one machine, not just between environments.
 
 ## Known state as of this session's end
 
-- Still uncommitted — not yet committed (reviewing the diff first). The
-  Prisma-generated `.claude/skills`/`.windsurf/skills`/`.agents/skills`/
-  `skills-lock.json` clutter from Phase 1 Step 1 has since been removed.
+- **Deployed and live on Vercel**: `https://qa-agent-alpha.vercel.app`.
+  Everything works on the hosted site except AI chat, which is deliberately
+  disabled there to keep the project at $0 (see Phase 2 Step 8) — auth,
+  guest mode, project/document management, uploads, exports, and generated
+  `.docx`/`.xlsx` files are all live against real Neon Postgres and
+  Cloudflare R2. Chat keeps working normally when run locally.
+- **Committed.** The Vercel-deployment fixes (DOMMatrix, native-binary file
+  tracing, chat-disabled gate) landed in their own commit on top of the
+  earlier Phase 1/2 commits. The Prisma-generated
+  `.claude/skills`/`.windsurf/skills`/`.agents/skills`/`skills-lock.json`
+  clutter from Phase 1 Step 1 has since been removed.
 - **The app now runs entirely on Postgres (Neon)** — local dev included.
   `data/qa-agent.sqlite` still exists but is completely inert; the original
   pre-auth "Testing FRamwwork" project living in it was *not* migrated and is
   no longer reachable through the app. Neon's connection string is in `.env`
   as `APP_DATABASE_URL` — the live database is currently empty (all test data
   from this session's verification was cleaned up afterward).
-- The Neon password that was pasted into chat during setup should be rotated
-  from the Neon dashboard (Settings → Reset password) — flagged at the time,
-  not yet confirmed done.
+- The Neon password that was pasted into chat during setup was flagged for
+  rotation (Neon dashboard → Settings → Reset password); explicitly declined
+  by choice — "leave it, don't think we'll have any issues."
 - **File storage now runs entirely on Cloudflare R2** — local disk is no
   longer used for anything (`paths.ts` was deleted). The bucket is currently
   empty (test data cleaned up after verification, same as the database).
