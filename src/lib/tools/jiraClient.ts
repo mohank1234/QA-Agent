@@ -1,3 +1,5 @@
+import { config as appConfig } from "../config";
+
 type JiraConfig = {
   baseUrl: string;
   email: string;
@@ -5,11 +7,7 @@ type JiraConfig = {
 };
 
 function getConfig(): JiraConfig | null {
-  const baseUrl = process.env.JIRA_BASE_URL;
-  const email = process.env.JIRA_EMAIL;
-  const apiToken = process.env.JIRA_API_TOKEN;
-  if (!baseUrl || !email || !apiToken) return null;
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), email, apiToken };
+  return appConfig.jira;
 }
 
 export function isJiraConfigured(): boolean {
@@ -86,14 +84,26 @@ export type JiraIssueSummary = {
   description: string;
 };
 
-function summarizeIssue(raw: any): JiraIssueSummary {
+type JiraIssueRecord = {
+  key?: string;
+  fields?: {
+    summary?: string;
+    status?: { name?: string };
+    issuetype?: { name?: string };
+    priority?: { name?: string } | null;
+    description?: unknown;
+  };
+};
+
+function summarizeIssue(raw: unknown): JiraIssueSummary {
+  const issue = raw as JiraIssueRecord;
   return {
-    key: raw.key,
-    summary: raw.fields?.summary ?? "",
-    status: raw.fields?.status?.name ?? "Unknown",
-    issueType: raw.fields?.issuetype?.name ?? "Unknown",
-    priority: raw.fields?.priority?.name ?? null,
-    description: adfToPlainText(raw.fields?.description).trim(),
+    key: issue.key ?? "",
+    summary: issue.fields?.summary ?? "",
+    status: issue.fields?.status?.name ?? "Unknown",
+    issueType: issue.fields?.issuetype?.name ?? "Unknown",
+    priority: issue.fields?.priority?.name ?? null,
+    description: adfToPlainText(issue.fields?.description).trim(),
   };
 }
 

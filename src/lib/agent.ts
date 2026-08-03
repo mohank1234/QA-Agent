@@ -15,7 +15,7 @@ export async function runAgentTurn(
   projectId: string,
   userMessage: string
 ): Promise<AgentTurnResult> {
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   const documents: SavedDocumentInfo[] = [];
   const mcpServer = buildProjectTools(projectId, (doc) => documents.push(doc));
 
@@ -56,7 +56,7 @@ export async function runAgentTurn(
   }
 
   if (sessionId && sessionId !== project?.session_id) {
-    setProjectSessionId(projectId, sessionId);
+    await setProjectSessionId(projectId, sessionId);
   }
 
   return { reply, sessionId, costUsd, isError, documents };

@@ -1,30 +1,23 @@
 import { NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
-import { projectUploadsDir } from "@/lib/paths";
+import { uploadKey, getObject } from "@/lib/storage";
 import { extractDocumentText } from "@/lib/tools/readDocument";
+import { requireProjectAccess } from "@/lib/apiAuth";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ projectId: string; fileName: string }> }
 ) {
   const { projectId, fileName } = await params;
-  const dir = projectUploadsDir(projectId);
-  const safeName = path.basename(fileName);
-  const filePath = path.join(dir, safeName);
+  const access = await requireProjectAccess(projectId);
+  if (!access.ok) return access.response;
 
-  if (!filePath.startsWith(dir)) {
-    return NextResponse.json({ error: "Invalid file name." }, { status: 400 });
-  }
-
-  try {
-    await fs.access(filePath);
-  } catch {
+  const data = await getObject(uploadKey(projectId, fileName));
+  if (!data) {
     return NextResponse.json({ error: "File not found." }, { status: 404 });
   }
 
   try {
-    const text = await extractDocumentText(filePath);
+    const text = await extractDocumentText(data, fileName);
     return NextResponse.json({ text });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not read this file.";

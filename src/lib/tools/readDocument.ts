@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
@@ -60,9 +59,8 @@ async function extractPptx(buffer: Buffer): Promise<string> {
   return parts.join("\n\n");
 }
 
-export async function extractDocumentText(filePath: string): Promise<string> {
-  const buffer = await fs.readFile(filePath);
-  const ext = path.extname(filePath).toLowerCase();
+export async function extractDocumentText(buffer: Buffer, fileName: string): Promise<string> {
+  const ext = path.extname(fileName).toLowerCase();
 
   switch (ext) {
     case ".pdf":

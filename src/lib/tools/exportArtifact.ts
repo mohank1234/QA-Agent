@@ -1,94 +1,119 @@
-import path from "node:path";
-import fs from "node:fs";
 import * as XLSX from "xlsx";
-import { getDb } from "../db";
-import { projectExportsDir } from "../paths";
+import { prisma } from "../prisma";
+import { exportKey, putObject } from "../storage";
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-function writeSheet(rows: Record<string, unknown>[], sheetName: string, filePath: string) {
+function buildSheetBuffer(rows: Record<string, unknown>[], sheetName: string): Buffer {
   const sheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
   // XLSX.writeFile() does its own environment feature-detection to decide how
   // to save, which misbehaves under Next.js/Turbopack bundling ("cannot save
-  // file"). Getting a Buffer and writing it ourselves sidesteps that entirely.
-  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
-  fs.writeFileSync(filePath, buffer);
+  // file"). Getting a Buffer directly sidesteps that entirely.
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
 export type ExportKind = "requirements" | "test_cases" | "benchmark" | "bug_reports";
 
-function rowsForKind(db: ReturnType<typeof getDb>, projectId: string, kind: ExportKind) {
+async function rowsForKind(projectId: string, kind: ExportKind) {
   switch (kind) {
-    case "requirements":
+    case "requirements": {
+      const rows = await prisma.requirement.findMany({
+        where: { projectId },
+        orderBy: { reqId: "asc" },
+      });
       return {
-        rows: db
-          .prepare(
-            `SELECT req_id AS "Requirement ID", req_type AS "Type", description AS "Description",
-                    CASE is_assumption WHEN 1 THEN 'Yes' ELSE 'No' END AS "Assumption",
-                    source_document AS "Source Document"
-             FROM requirements WHERE project_id = ? ORDER BY req_id`
-          )
-          .all(projectId) as Record<string, unknown>[],
+        rows: rows.map((r) => ({
+          "Requirement ID": r.reqId,
+          Type: r.reqType,
+          Description: r.description,
+          Assumption: r.isAssumption === 1 ? "Yes" : "No",
+          "Source Document": r.sourceDocument,
+        })),
         baseName: "requirements_rtm",
         sheetName: "Requirements",
       };
-    case "test_cases":
+    }
+    case "test_cases": {
+      const rows = await prisma.testCase.findMany({
+        where: { projectId },
+        orderBy: { caseId: "asc" },
+      });
       return {
-        rows: db
-          .prepare(
-            `SELECT case_id AS "Test Case ID", source_requirement AS "Requirement Mapping",
-                    module AS "Module", test_type AS "Test Type", priority AS "Priority",
-                    severity AS "Severity", preconditions AS "Preconditions", steps AS "Test Steps",
-                    expected_result AS "Expected Result", test_data AS "Test Data"
-             FROM test_cases WHERE project_id = ? ORDER BY case_id`
-          )
-          .all(projectId) as Record<string, unknown>[],
+        rows: rows.map((r) => ({
+          "Test Case ID": r.caseId,
+          "Requirement Mapping": r.sourceRequirement,
+          Module: r.module,
+          "Test Type": r.testType,
+          Priority: r.priority,
+          Severity: r.severity,
+          Preconditions: r.preconditions,
+          "Test Steps": r.steps,
+          "Expected Result": r.expectedResult,
+          "Test Data": r.testData,
+        })),
         baseName: "test_cases",
         sheetName: "Test Cases",
       };
-    case "bug_reports":
+    }
+    case "bug_reports": {
+      const rows = await prisma.bugReport.findMany({
+        where: { projectId },
+        orderBy: { bugId: "asc" },
+      });
       return {
-        rows: db
-          .prepare(
-            `SELECT bug_id AS "Bug ID", title AS "Title", description AS "Description",
-                    steps_to_reproduce AS "Steps to Reproduce", expected_result AS "Expected Result",
-                    actual_result AS "Actual Result", severity AS "Severity", priority AS "Priority",
-                    environment AS "Environment", root_cause_suggestion AS "Root Cause Suggestion",
-                    source_test_case AS "Source Test Case", status AS "Status"
-             FROM bug_reports WHERE project_id = ? ORDER BY bug_id`
-          )
-          .all(projectId) as Record<string, unknown>[],
+        rows: rows.map((r) => ({
+          "Bug ID": r.bugId,
+          Title: r.title,
+          Description: r.description,
+          "Steps to Reproduce": r.stepsToReproduce,
+          "Expected Result": r.expectedResult,
+          "Actual Result": r.actualResult,
+          Severity: r.severity,
+          Priority: r.priority,
+          Environment: r.environment,
+          "Root Cause Suggestion": r.rootCauseSuggestion,
+          "Source Test Case": r.sourceTestCase,
+          Status: r.status,
+        })),
         baseName: "bug_reports",
         sheetName: "Bug Reports",
       };
-    case "benchmark":
+    }
+    case "benchmark": {
+      const rows = await prisma.benchmarkRow.findMany({
+        where: { projectId },
+        orderBy: { sNo: "asc" },
+      });
       return {
-        rows: db
-          .prepare(
-            `SELECT s_no AS "S.No", agent AS "Agent", question AS "Question",
-                    query_category AS "Query Category", scenario_type AS "Scenario Type",
-                    expected_answer AS "Expected Answer", answer_in_testing AS "Answer in Testing",
-                    score AS "Score", source_document AS "Source Document",
-                    notes AS "Notes / Edge Flag", pass_fail AS "Pass / Fail"
-             FROM benchmark_rows WHERE project_id = ? ORDER BY s_no`
-          )
-          .all(projectId) as Record<string, unknown>[],
+        rows: rows.map((r) => ({
+          "S.No": r.sNo,
+          Agent: r.agent,
+          Question: r.question,
+          "Query Category": r.queryCategory,
+          "Scenario Type": r.scenarioType,
+          "Expected Answer": r.expectedAnswer,
+          "Answer in Testing": r.answerInTesting,
+          Score: r.score,
+          "Source Document": r.sourceDocument,
+          "Notes / Edge Flag": r.notes,
+          "Pass / Fail": r.passFail,
+        })),
         baseName: "benchmark_dataset",
         sheetName: "Benchmark",
       };
+    }
   }
 }
 
-export function exportProjectArtifact(
+export async function exportProjectArtifact(
   projectId: string,
   kind: ExportKind
-): { fileName: string; filePath: string; rowCount: number } {
-  const db = getDb();
-  const { rows, baseName, sheetName } = rowsForKind(db, projectId, kind);
+): Promise<{ fileName: string; key: string; rowCount: number }> {
+  const { rows, baseName, sheetName } = await rowsForKind(projectId, kind);
 
   if (rows.length === 0) {
     throw new Error(
@@ -97,8 +122,9 @@ export function exportProjectArtifact(
   }
 
   const fileName = `${timestamp()}_${baseName}.xlsx`;
-  const filePath = path.join(projectExportsDir(projectId), fileName);
-  writeSheet(rows, sheetName, filePath);
+  const key = exportKey(projectId, fileName);
+  const buffer = buildSheetBuffer(rows, sheetName);
+  await putObject(key, buffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
-  return { fileName, filePath, rowCount: rows.length };
+  return { fileName, key, rowCount: rows.length };
 }

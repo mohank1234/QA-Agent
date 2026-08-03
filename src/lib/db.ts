@@ -1,180 +1,152 @@
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { DB_PATH } from "./paths";
+import { prisma } from "./prisma";
 
-let db: DatabaseSync | null = null;
-
-export function getDb(): DatabaseSync {
-  if (db) return db;
-  db = new DatabaseSync(DB_PATH);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      session_id TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS documents (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      filename TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      uploaded_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS requirements (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      req_id TEXT NOT NULL,
-      req_type TEXT,
-      description TEXT NOT NULL,
-      is_assumption INTEGER NOT NULL DEFAULT 0,
-      source_document TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS test_cases (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      case_id TEXT NOT NULL,
-      requirement_ref TEXT,
-      module TEXT,
-      test_type TEXT,
-      priority TEXT,
-      severity TEXT,
-      preconditions TEXT,
-      steps TEXT,
-      expected_result TEXT,
-      test_data TEXT,
-      source_requirement TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS benchmark_rows (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      s_no INTEGER,
-      agent TEXT,
-      question TEXT NOT NULL,
-      query_category TEXT,
-      scenario_type TEXT,
-      expected_answer TEXT,
-      answer_in_testing TEXT,
-      score REAL,
-      source_document TEXT,
-      notes TEXT,
-      pass_fail TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS bug_reports (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      bug_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      steps_to_reproduce TEXT,
-      expected_result TEXT,
-      actual_result TEXT,
-      severity TEXT,
-      priority TEXT,
-      environment TEXT,
-      root_cause_suggestion TEXT,
-      source_test_case TEXT,
-      status TEXT NOT NULL DEFAULT 'Open',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS generated_documents (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      doc_type TEXT NOT NULL,
-      filename TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_requirements_project ON requirements(project_id);
-    CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
-    CREATE INDEX IF NOT EXISTS idx_benchmark_rows_project ON benchmark_rows(project_id);
-    CREATE INDEX IF NOT EXISTS idx_bug_reports_project ON bug_reports(project_id);
-    CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id);
-    CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id);
-    CREATE INDEX IF NOT EXISTS idx_generated_documents_project ON generated_documents(project_id);
-  `);
-
-  const messageColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
-  if (!messageColumns.some((c) => c.name === "documents_json")) {
-    db.exec("ALTER TABLE messages ADD COLUMN documents_json TEXT");
-  }
-
-  return db;
-}
+// Every function here is now async (Prisma, unlike the node:sqlite this
+// replaced, has no synchronous API) — every caller across agentTools.ts,
+// agent.ts, auth.ts, apiAuth.ts, projectCleanup.ts, and the API routes needs
+// `await` on these. See docs/BUILD_JOURNAL.md for why this moved off SQLite.
 
 export type Project = {
   id: string;
   name: string;
   session_id: string | null;
   created_at: string;
+  owner_id: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  guest_id: string | null;
+  expires_at: string | null;
 };
 
-export function listProjects(): Project[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM projects ORDER BY created_at DESC")
-    .all();
-  return rows as unknown as Project[];
+function toProject(row: {
+  id: string;
+  name: string;
+  sessionId: string | null;
+  createdAt: string;
+  ownerId: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  guestId: string | null;
+  expiresAt: string | null;
+}): Project {
+  return {
+    id: row.id,
+    name: row.name,
+    session_id: row.sessionId,
+    created_at: row.createdAt,
+    owner_id: row.ownerId,
+    created_by: row.createdBy,
+    updated_by: row.updatedBy,
+    guest_id: row.guestId,
+    expires_at: row.expiresAt,
+  };
 }
 
-export function createProject(name: string): Project {
-  const id = randomUUID();
-  const created_at = new Date().toISOString();
-  getDb()
-    .prepare(
-      "INSERT INTO projects (id, name, session_id, created_at) VALUES (?, ?, NULL, ?)"
-    )
-    .run(id, name, created_at);
-  return { id, name, session_id: null, created_at };
-}
+export const GUEST_PROJECT_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-export function getProject(id: string): Project | undefined {
-  const row = getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id);
-  return row as unknown as Project | undefined;
-}
+export type ProjectIdentity = { userId: string } | { guestId: string };
 
-export function setProjectSessionId(projectId: string, sessionId: string) {
-  getDb()
-    .prepare("UPDATE projects SET session_id = ? WHERE id = ?")
-    .run(sessionId, projectId);
-}
-
-export function deleteProject(id: string) {
-  const dbi = getDb();
-  for (const table of [
-    "documents",
-    "messages",
-    "requirements",
-    "test_cases",
-    "benchmark_rows",
-    "bug_reports",
-    "generated_documents",
-  ]) {
-    dbi.prepare(`DELETE FROM ${table} WHERE project_id = ?`).run(id);
+export async function listProjects(identity: ProjectIdentity): Promise<Project[]> {
+  if ("userId" in identity) {
+    const rows = await prisma.project.findMany({
+      where: { ownerId: identity.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    return rows.map(toProject);
   }
-  dbi.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  // Guests only ever see their own not-yet-expired projects — an expired row
+  // still physically exists for a few minutes until the cleanup sweep runs,
+  // but should never be listed as usable in that window.
+  const now = new Date().toISOString();
+  const rows = await prisma.project.findMany({
+    where: { guestId: identity.guestId, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map(toProject);
 }
 
-export function saveGeneratedDocument(
+export async function createProject(name: string, identity: ProjectIdentity): Promise<Project> {
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
+  const isGuest = "guestId" in identity;
+  const ownerId = isGuest ? null : identity.userId;
+  const guestId = isGuest ? identity.guestId : null;
+  const createdBy = isGuest ? null : identity.userId;
+  const updatedBy = createdBy;
+  const expiresAt = isGuest ? new Date(Date.now() + GUEST_PROJECT_TTL_MS).toISOString() : null;
+
+  const row = await prisma.project.create({
+    data: { id, name, createdAt, ownerId, createdBy, updatedBy, guestId, expiresAt },
+  });
+  return toProject(row);
+}
+
+export async function getProject(id: string): Promise<Project | undefined> {
+  const row = await prisma.project.findUnique({ where: { id } });
+  return row ? toProject(row) : undefined;
+}
+
+export function isProjectExpired(project: Project): boolean {
+  return project.expires_at !== null && project.expires_at <= new Date().toISOString();
+}
+
+// One-time backfill for projects created before auth existed (ownerId AND
+// guestId both null). The guestId: null clause matters: without it, this
+// would also sweep up active anonymous-session projects that simply haven't
+// expired yet, which is not what "orphaned" means here. Only ever claims for
+// the very first user account on this instance — see callers — so a
+// second/third signup on a real multi-user deployment never inherits
+// someone else's pre-existing data. (createdBy is always null on rows this
+// matches — every insert path sets ownerId/createdBy together or not at all
+// — so a plain assignment here is equivalent to the original SQL's
+// COALESCE(created_by, ?), not a behavior change.)
+export async function claimOrphanedProjects(userId: string): Promise<void> {
+  await prisma.project.updateMany({
+    where: { ownerId: null, guestId: null },
+    data: { ownerId: userId, createdBy: userId, updatedBy: userId },
+  });
+}
+
+// A guest who signs up/in gets their in-progress anonymous work instead of
+// losing it — the whole point of the "if login, stays in your profile"
+// requirement. Only converts rows still matching this exact guestId cookie;
+// already-expired-and-swept rows are gone by the time this runs and there's
+// nothing to claim. (Same createdBy reasoning as claimOrphanedProjects above
+// — guest-created rows never have a pre-existing createdBy.)
+export async function claimGuestProjects(guestId: string, userId: string): Promise<void> {
+  await prisma.project.updateMany({
+    where: { guestId },
+    data: { ownerId: userId, createdBy: userId, updatedBy: userId, guestId: null, expiresAt: null },
+  });
+}
+
+export async function listExpiredGuestProjectIds(): Promise<string[]> {
+  const now = new Date().toISOString();
+  const rows = await prisma.project.findMany({
+    where: { expiresAt: { not: null, lte: now } },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
+export async function setProjectSessionId(projectId: string, sessionId: string): Promise<void> {
+  await prisma.project.update({ where: { id: projectId }, data: { sessionId } });
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.document.deleteMany({ where: { projectId: id } }),
+    prisma.message.deleteMany({ where: { projectId: id } }),
+    prisma.requirement.deleteMany({ where: { projectId: id } }),
+    prisma.testCase.deleteMany({ where: { projectId: id } }),
+    prisma.benchmarkRow.deleteMany({ where: { projectId: id } }),
+    prisma.bugReport.deleteMany({ where: { projectId: id } }),
+    prisma.generatedDocument.deleteMany({ where: { projectId: id } }),
+    prisma.project.delete({ where: { id } }),
+  ]);
+}
+
+export async function saveGeneratedDocument(
   projectId: string,
   title: string,
   docType: string,
@@ -183,26 +155,35 @@ export function saveGeneratedDocument(
 ) {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
-  getDb()
-    .prepare(
-      "INSERT INTO generated_documents (id, project_id, title, doc_type, filename, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    )
-    .run(id, projectId, title, docType, filename, content, createdAt);
+  await prisma.generatedDocument.create({
+    data: { id, projectId, title, docType, filename, content, createdAt },
+  });
   return { id, createdAt };
 }
 
-export function listGeneratedDocuments(projectId: string) {
-  return getDb()
-    .prepare(
-      "SELECT id, title, doc_type, filename, created_at FROM generated_documents WHERE project_id = ? ORDER BY created_at DESC"
-    )
-    .all(projectId);
+export async function listGeneratedDocuments(projectId: string) {
+  const rows = await prisma.generatedDocument.findMany({
+    where: { projectId },
+    select: { id: true, title: true, docType: true, filename: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    doc_type: r.docType,
+    filename: r.filename,
+    created_at: r.createdAt,
+  }));
 }
 
-export function getGeneratedDocumentContent(projectId: string, filename: string): string | undefined {
-  const row = getDb()
-    .prepare("SELECT content FROM generated_documents WHERE project_id = ? AND filename = ?")
-    .get(projectId, filename) as { content: string } | undefined;
+export async function getGeneratedDocumentContent(
+  projectId: string,
+  filename: string
+): Promise<string | undefined> {
+  const row = await prisma.generatedDocument.findFirst({
+    where: { projectId, filename },
+    select: { content: true },
+  });
   return row?.content;
 }
 
@@ -213,74 +194,70 @@ export type MessageDocument = {
   downloadUrl: string;
 };
 
-export function addMessage(
+export async function addMessage(
   projectId: string,
   role: "user" | "assistant",
   content: string,
   documents?: MessageDocument[]
-) {
-  getDb()
-    .prepare(
-      "INSERT INTO messages (id, project_id, role, content, documents_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-    )
-    .run(
-      randomUUID(),
+): Promise<void> {
+  await prisma.message.create({
+    data: {
+      id: randomUUID(),
       projectId,
       role,
       content,
-      documents && documents.length > 0 ? JSON.stringify(documents) : null,
-      new Date().toISOString()
-    );
+      documentsJson: documents && documents.length > 0 ? JSON.stringify(documents) : null,
+      createdAt: new Date().toISOString(),
+    },
+  });
 }
 
-export function listMessages(projectId: string) {
-  const rows = getDb()
-    .prepare(
-      "SELECT role, content, documents_json, created_at FROM messages WHERE project_id = ? ORDER BY created_at ASC"
-    )
-    .all(projectId) as {
-    role: string;
-    content: string;
-    documents_json: string | null;
-    created_at: string;
-  }[];
+export async function listMessages(projectId: string) {
+  const rows = await prisma.message.findMany({
+    where: { projectId },
+    select: { role: true, content: true, documentsJson: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
   return rows.map((r) => ({
     role: r.role,
     content: r.content,
-    created_at: r.created_at,
-    documents: r.documents_json ? (JSON.parse(r.documents_json) as MessageDocument[]) : [],
+    created_at: r.createdAt,
+    documents: r.documentsJson ? (JSON.parse(r.documentsJson) as MessageDocument[]) : [],
   }));
 }
 
-export function addDocument(projectId: string, filename: string, filePath: string) {
-  const dbi = getDb();
+export async function addDocument(projectId: string, filename: string, filePath: string) {
   const uploadedAt = new Date().toISOString();
-  const existing = dbi
-    .prepare("SELECT id FROM documents WHERE project_id = ? AND filename = ?")
-    .get(projectId, filename) as { id: string } | undefined;
+  const existing = await prisma.document.findFirst({
+    where: { projectId, filename },
+    select: { id: true },
+  });
 
   if (existing) {
-    dbi
-      .prepare("UPDATE documents SET file_path = ?, uploaded_at = ? WHERE id = ?")
-      .run(filePath, uploadedAt, existing.id);
+    await prisma.document.update({
+      where: { id: existing.id },
+      data: { filePath, uploadedAt },
+    });
     return { id: existing.id, uploadedAt };
   }
 
   const id = randomUUID();
-  dbi
-    .prepare(
-      "INSERT INTO documents (id, project_id, filename, file_path, uploaded_at) VALUES (?, ?, ?, ?, ?)"
-    )
-    .run(id, projectId, filename, filePath, uploadedAt);
+  await prisma.document.create({ data: { id, projectId, filename, filePath, uploadedAt } });
   return { id, uploadedAt };
 }
 
-export function listDocuments(projectId: string) {
-  return getDb()
-    .prepare(
-      "SELECT id, filename, file_path, uploaded_at FROM documents WHERE project_id = ? ORDER BY uploaded_at ASC"
-    )
-    .all(projectId);
+export async function listDocuments(projectId: string) {
+  const rows = await prisma.document.findMany({
+    where: { projectId },
+    select: { id: true, filename: true, filePath: true, uploadedAt: true },
+    orderBy: { uploadedAt: "asc" },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    filename: r.filename,
+    file_path: r.filePath,
+    uploaded_at: r.uploadedAt,
+  }));
 }
 
 export type RequirementInput = {
@@ -291,30 +268,34 @@ export type RequirementInput = {
   sourceDocument?: string;
 };
 
-export function insertRequirement(projectId: string, r: RequirementInput) {
-  getDb()
-    .prepare(
-      `INSERT INTO requirements (id, project_id, req_id, req_type, description, is_assumption, source_document, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      randomUUID(),
+export async function insertRequirement(projectId: string, r: RequirementInput): Promise<void> {
+  await prisma.requirement.create({
+    data: {
+      id: randomUUID(),
       projectId,
-      r.reqId,
-      r.reqType ?? null,
-      r.description,
-      r.isAssumption ? 1 : 0,
-      r.sourceDocument ?? null,
-      new Date().toISOString()
-    );
+      reqId: r.reqId,
+      reqType: r.reqType ?? null,
+      description: r.description,
+      isAssumption: r.isAssumption ? 1 : 0,
+      sourceDocument: r.sourceDocument ?? null,
+      createdAt: new Date().toISOString(),
+    },
+  });
 }
 
-export function listRequirementsForProject(projectId: string) {
-  return getDb()
-    .prepare(
-      "SELECT req_id, req_type, description, is_assumption, source_document FROM requirements WHERE project_id = ? ORDER BY req_id"
-    )
-    .all(projectId);
+export async function listRequirementsForProject(projectId: string) {
+  const rows = await prisma.requirement.findMany({
+    where: { projectId },
+    select: { reqId: true, reqType: true, description: true, isAssumption: true, sourceDocument: true },
+    orderBy: { reqId: "asc" },
+  });
+  return rows.map((r) => ({
+    req_id: r.reqId,
+    req_type: r.reqType,
+    description: r.description,
+    is_assumption: r.isAssumption,
+    source_document: r.sourceDocument,
+  }));
 }
 
 export type TestCaseInput = {
@@ -330,37 +311,56 @@ export type TestCaseInput = {
   testData?: string;
 };
 
-export function insertTestCase(projectId: string, t: TestCaseInput) {
-  getDb()
-    .prepare(
-      `INSERT INTO test_cases (id, project_id, case_id, requirement_ref, module, test_type, priority, severity, preconditions, steps, expected_result, test_data, source_requirement, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      randomUUID(),
+export async function insertTestCase(projectId: string, t: TestCaseInput): Promise<void> {
+  await prisma.testCase.create({
+    data: {
+      id: randomUUID(),
       projectId,
-      t.caseId,
-      t.sourceRequirement ?? null,
-      t.module ?? null,
-      t.testType ?? null,
-      t.priority ?? null,
-      t.severity ?? null,
-      t.preconditions ?? null,
-      t.steps,
-      t.expectedResult,
-      t.testData ?? null,
-      t.sourceRequirement ?? null,
-      new Date().toISOString()
-    );
+      caseId: t.caseId,
+      requirementRef: t.sourceRequirement ?? null,
+      module: t.module ?? null,
+      testType: t.testType ?? null,
+      priority: t.priority ?? null,
+      severity: t.severity ?? null,
+      preconditions: t.preconditions ?? null,
+      steps: t.steps,
+      expectedResult: t.expectedResult,
+      testData: t.testData ?? null,
+      sourceRequirement: t.sourceRequirement ?? null,
+      createdAt: new Date().toISOString(),
+    },
+  });
 }
 
-export function listTestCasesForProject(projectId: string) {
-  return getDb()
-    .prepare(
-      `SELECT case_id, source_requirement, module, test_type, priority, severity, preconditions, steps, expected_result, test_data
-       FROM test_cases WHERE project_id = ? ORDER BY case_id`
-    )
-    .all(projectId);
+export async function listTestCasesForProject(projectId: string) {
+  const rows = await prisma.testCase.findMany({
+    where: { projectId },
+    select: {
+      caseId: true,
+      sourceRequirement: true,
+      module: true,
+      testType: true,
+      priority: true,
+      severity: true,
+      preconditions: true,
+      steps: true,
+      expectedResult: true,
+      testData: true,
+    },
+    orderBy: { caseId: "asc" },
+  });
+  return rows.map((r) => ({
+    case_id: r.caseId,
+    source_requirement: r.sourceRequirement,
+    module: r.module,
+    test_type: r.testType,
+    priority: r.priority,
+    severity: r.severity,
+    preconditions: r.preconditions,
+    steps: r.steps,
+    expected_result: r.expectedResult,
+    test_data: r.testData,
+  }));
 }
 
 export type BenchmarkRowInput = {
@@ -377,37 +377,58 @@ export type BenchmarkRowInput = {
   passFail?: string;
 };
 
-export function insertBenchmarkRow(projectId: string, b: BenchmarkRowInput) {
-  getDb()
-    .prepare(
-      `INSERT INTO benchmark_rows (id, project_id, s_no, agent, question, query_category, scenario_type, expected_answer, answer_in_testing, score, source_document, notes, pass_fail, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      randomUUID(),
+export async function insertBenchmarkRow(projectId: string, b: BenchmarkRowInput): Promise<void> {
+  await prisma.benchmarkRow.create({
+    data: {
+      id: randomUUID(),
       projectId,
-      b.sNo ?? null,
-      b.agent ?? null,
-      b.question,
-      b.queryCategory ?? null,
-      b.scenarioType ?? null,
-      b.expectedAnswer ?? null,
-      b.answerInTesting ?? null,
-      b.score ?? null,
-      b.sourceDocument ?? null,
-      b.notes ?? null,
-      b.passFail ?? null,
-      new Date().toISOString()
-    );
+      sNo: b.sNo ?? null,
+      agent: b.agent ?? null,
+      question: b.question,
+      queryCategory: b.queryCategory ?? null,
+      scenarioType: b.scenarioType ?? null,
+      expectedAnswer: b.expectedAnswer ?? null,
+      answerInTesting: b.answerInTesting ?? null,
+      score: b.score ?? null,
+      sourceDocument: b.sourceDocument ?? null,
+      notes: b.notes ?? null,
+      passFail: b.passFail ?? null,
+      createdAt: new Date().toISOString(),
+    },
+  });
 }
 
-export function listBenchmarkRowsForProject(projectId: string) {
-  return getDb()
-    .prepare(
-      `SELECT s_no, agent, question, query_category, scenario_type, expected_answer, answer_in_testing, score, source_document, notes, pass_fail
-       FROM benchmark_rows WHERE project_id = ? ORDER BY s_no`
-    )
-    .all(projectId);
+export async function listBenchmarkRowsForProject(projectId: string) {
+  const rows = await prisma.benchmarkRow.findMany({
+    where: { projectId },
+    select: {
+      sNo: true,
+      agent: true,
+      question: true,
+      queryCategory: true,
+      scenarioType: true,
+      expectedAnswer: true,
+      answerInTesting: true,
+      score: true,
+      sourceDocument: true,
+      notes: true,
+      passFail: true,
+    },
+    orderBy: { sNo: "asc" },
+  });
+  return rows.map((r) => ({
+    s_no: r.sNo,
+    agent: r.agent,
+    question: r.question,
+    query_category: r.queryCategory,
+    scenario_type: r.scenarioType,
+    expected_answer: r.expectedAnswer,
+    answer_in_testing: r.answerInTesting,
+    score: r.score,
+    source_document: r.sourceDocument,
+    notes: r.notes,
+    pass_fail: r.passFail,
+  }));
 }
 
 export type BugReportInput = {
@@ -425,38 +446,61 @@ export type BugReportInput = {
   status?: string;
 };
 
-export function insertBugReport(projectId: string, b: BugReportInput) {
-  getDb()
-    .prepare(
-      `INSERT INTO bug_reports (id, project_id, bug_id, title, description, steps_to_reproduce, expected_result, actual_result, severity, priority, environment, root_cause_suggestion, source_test_case, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      randomUUID(),
+export async function insertBugReport(projectId: string, b: BugReportInput): Promise<void> {
+  await prisma.bugReport.create({
+    data: {
+      id: randomUUID(),
       projectId,
-      b.bugId,
-      b.title,
-      b.description ?? null,
-      b.stepsToReproduce ?? null,
-      b.expectedResult ?? null,
-      b.actualResult ?? null,
-      b.severity ?? null,
-      b.priority ?? null,
-      b.environment ?? null,
-      b.rootCauseSuggestion ?? null,
-      b.sourceTestCase ?? null,
-      b.status ?? "Open",
-      new Date().toISOString()
-    );
+      bugId: b.bugId,
+      title: b.title,
+      description: b.description ?? null,
+      stepsToReproduce: b.stepsToReproduce ?? null,
+      expectedResult: b.expectedResult ?? null,
+      actualResult: b.actualResult ?? null,
+      severity: b.severity ?? null,
+      priority: b.priority ?? null,
+      environment: b.environment ?? null,
+      rootCauseSuggestion: b.rootCauseSuggestion ?? null,
+      sourceTestCase: b.sourceTestCase ?? null,
+      status: b.status ?? "Open",
+      createdAt: new Date().toISOString(),
+    },
+  });
 }
 
-export function listBugReportsForProject(projectId: string) {
-  return getDb()
-    .prepare(
-      `SELECT bug_id, title, description, steps_to_reproduce, expected_result, actual_result, severity, priority, environment, root_cause_suggestion, source_test_case, status
-       FROM bug_reports WHERE project_id = ? ORDER BY bug_id`
-    )
-    .all(projectId);
+export async function listBugReportsForProject(projectId: string) {
+  const rows = await prisma.bugReport.findMany({
+    where: { projectId },
+    select: {
+      bugId: true,
+      title: true,
+      description: true,
+      stepsToReproduce: true,
+      expectedResult: true,
+      actualResult: true,
+      severity: true,
+      priority: true,
+      environment: true,
+      rootCauseSuggestion: true,
+      sourceTestCase: true,
+      status: true,
+    },
+    orderBy: { bugId: "asc" },
+  });
+  return rows.map((r) => ({
+    bug_id: r.bugId,
+    title: r.title,
+    description: r.description,
+    steps_to_reproduce: r.stepsToReproduce,
+    expected_result: r.expectedResult,
+    actual_result: r.actualResult,
+    severity: r.severity,
+    priority: r.priority,
+    environment: r.environment,
+    root_cause_suggestion: r.rootCauseSuggestion,
+    source_test_case: r.sourceTestCase,
+    status: r.status,
+  }));
 }
 
 export type ProjectStats = {
@@ -473,71 +517,53 @@ export type ProjectStats = {
   benchmarkAvgScore: number | null;
 };
 
-export function computeProjectStats(projectId: string): ProjectStats {
-  const db = getDb();
+export async function computeProjectStats(projectId: string): Promise<ProjectStats> {
+  const [
+    requirementCount,
+    assumptionCount,
+    testCaseCount,
+    testCaseSourceRefs,
+    bugCount,
+    bugsByStatusRows,
+    bugsBySeverityRows,
+    benchmarkRowCount,
+    benchmarkPassCount,
+    benchmarkFailCount,
+    benchmarkAvg,
+  ] = await Promise.all([
+    prisma.requirement.count({ where: { projectId } }),
+    prisma.requirement.count({ where: { projectId, isAssumption: 1 } }),
+    prisma.testCase.count({ where: { projectId } }),
+    prisma.testCase.findMany({
+      where: { projectId, sourceRequirement: { not: null } },
+      select: { sourceRequirement: true },
+      distinct: ["sourceRequirement"],
+    }),
+    prisma.bugReport.count({ where: { projectId } }),
+    prisma.bugReport.groupBy({ by: ["status"], where: { projectId }, _count: { _all: true } }),
+    prisma.bugReport.groupBy({ by: ["severity"], where: { projectId }, _count: { _all: true } }),
+    prisma.benchmarkRow.count({ where: { projectId } }),
+    prisma.benchmarkRow.count({ where: { projectId, passFail: "Pass" } }),
+    prisma.benchmarkRow.count({ where: { projectId, passFail: "Fail" } }),
+    prisma.benchmarkRow.aggregate({ where: { projectId }, _avg: { score: true } }),
+  ]);
 
-  const requirementCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM requirements WHERE project_id = ?").get(projectId) as {
-      c: number;
-    }
-  ).c;
-  const assumptionCount = (
-    db
-      .prepare(
-        "SELECT COUNT(*) AS c FROM requirements WHERE project_id = ? AND is_assumption = 1"
-      )
-      .get(projectId) as { c: number }
-  ).c;
-  const testCaseCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM test_cases WHERE project_id = ?").get(projectId) as {
-      c: number;
-    }
-  ).c;
-  const requirementsWithTestCases = (
-    db
-      .prepare(
-        `SELECT COUNT(DISTINCT req_id) AS c FROM requirements
-         WHERE project_id = ? AND req_id IN (
-           SELECT source_requirement FROM test_cases WHERE project_id = ? AND source_requirement IS NOT NULL
-         )`
-      )
-      .get(projectId, projectId) as { c: number }
-  ).c;
-  const bugCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM bug_reports WHERE project_id = ?").get(projectId) as {
-      c: number;
-    }
-  ).c;
-  const bugsByStatusRows = db
-    .prepare("SELECT status, COUNT(*) AS c FROM bug_reports WHERE project_id = ? GROUP BY status")
-    .all(projectId) as { status: string; c: number }[];
-  const bugsBySeverityRows = db
-    .prepare(
-      "SELECT COALESCE(severity, 'Unspecified') AS severity, COUNT(*) AS c FROM bug_reports WHERE project_id = ? GROUP BY severity"
-    )
-    .all(projectId) as { severity: string; c: number }[];
-  const benchmarkRowCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM benchmark_rows WHERE project_id = ?").get(projectId) as {
-      c: number;
-    }
-  ).c;
-  const benchmarkPassCount = (
-    db
-      .prepare(
-        "SELECT COUNT(*) AS c FROM benchmark_rows WHERE project_id = ? AND pass_fail = 'Pass'"
-      )
-      .get(projectId) as { c: number }
-  ).c;
-  const benchmarkFailCount = (
-    db
-      .prepare(
-        "SELECT COUNT(*) AS c FROM benchmark_rows WHERE project_id = ? AND pass_fail = 'Fail'"
-      )
-      .get(projectId) as { c: number }
-  ).c;
-  const benchmarkAvgScoreRow = db
-    .prepare("SELECT AVG(score) AS avg_score FROM benchmark_rows WHERE project_id = ?")
-    .get(projectId) as { avg_score: number | null };
+  // Distinct requirement IDs referenced by at least one test case in this
+  // project — equivalent to the original SQL's
+  // `req_id IN (SELECT source_requirement FROM test_cases WHERE ...)`.
+  const referencedReqIds = testCaseSourceRefs
+    .map((r) => r.sourceRequirement)
+    .filter((v): v is string => v !== null);
+  const requirementsWithTestCases =
+    referencedReqIds.length === 0
+      ? 0
+      : await prisma.requirement.count({ where: { projectId, reqId: { in: referencedReqIds } } });
+
+  const bugsBySeverity: Record<string, number> = {};
+  for (const row of bugsBySeverityRows) {
+    const key = row.severity ?? "Unspecified";
+    bugsBySeverity[key] = (bugsBySeverity[key] ?? 0) + row._count._all;
+  }
 
   return {
     requirementCount,
@@ -545,11 +571,11 @@ export function computeProjectStats(projectId: string): ProjectStats {
     testCaseCount,
     requirementsWithTestCases,
     bugCount,
-    bugsByStatus: Object.fromEntries(bugsByStatusRows.map((r) => [r.status, r.c])),
-    bugsBySeverity: Object.fromEntries(bugsBySeverityRows.map((r) => [r.severity, r.c])),
+    bugsByStatus: Object.fromEntries(bugsByStatusRows.map((r) => [r.status, r._count._all])),
+    bugsBySeverity,
     benchmarkRowCount,
     benchmarkPassCount,
     benchmarkFailCount,
-    benchmarkAvgScore: benchmarkAvgScoreRow.avg_score,
+    benchmarkAvgScore: benchmarkAvg._avg.score,
   };
 }

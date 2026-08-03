@@ -1,8 +1,15 @@
+import { config as appConfig } from "../config";
+
 const MAX_ROWS = 500;
 const STATEMENT_TIMEOUT_MS = 10_000;
 
+// INTO matters even though it's not a "verb": Postgres' `SELECT ... INTO
+// new_table FROM x` creates a table, and MySQL's `SELECT ... INTO OUTFILE`
+// writes query results to a file on the DB server — both are top-level
+// statements that start with SELECT and pass every other check here, so
+// without this they'd slip past a "read-only" guard entirely.
 const FORBIDDEN_KEYWORDS =
-  /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC|EXECUTE|COPY|VACUUM|REINDEX|ATTACH|DETACH|PRAGMA)\b/i;
+  /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|CALL|EXEC|EXECUTE|COPY|VACUUM|REINDEX|ATTACH|DETACH|PRAGMA|INTO)\b/i;
 
 // Replaces the contents of '...'-quoted string literals (handling doubled ''
 // as an escaped quote) with a neutral placeholder, so a value like
@@ -38,23 +45,8 @@ export type QueryResult = {
   truncated: boolean;
 };
 
-type EngineConfig = {
-  engine: "postgres" | "mysql";
-  connectionString: string;
-};
-
-function getEngineConfig(): EngineConfig | null {
-  const connectionString = process.env.DATABASE_URL;
-  const engine = process.env.DB_ENGINE?.toLowerCase();
-  if (!connectionString || !engine) return null;
-  if (engine !== "postgres" && engine !== "mysql") {
-    throw new Error(`DB_ENGINE must be "postgres" or "mysql", got "${engine}".`);
-  }
-  return { engine, connectionString };
-}
-
 export function isDbConfigured(): boolean {
-  return getEngineConfig() !== null;
+  return appConfig.readonlyQueryDb !== null;
 }
 
 // Lazily created, reused across calls — one pool per process.
@@ -85,8 +77,8 @@ async function getMysqlPool(connectionString: string) {
 }
 
 export async function runReadOnlyQuery(sql: string): Promise<QueryResult> {
-  const config = getEngineConfig();
-  if (!config) {
+  const dbConfig = appConfig.readonlyQueryDb;
+  if (!dbConfig) {
     throw new Error(
       "No database is configured. Set DB_ENGINE (postgres|mysql) and DATABASE_URL in .env.local to enable this tool."
     );
@@ -97,8 +89,8 @@ export async function runReadOnlyQuery(sql: string): Promise<QueryResult> {
     throw new Error(guard.reason);
   }
 
-  if (config.engine === "postgres") {
-    const pool = await getPgPool(config.connectionString);
+  if (dbConfig.engine === "postgres") {
+    const pool = await getPgPool(dbConfig.connectionString);
     const result = await pool.query(sql);
     const rows = result.rows.slice(0, MAX_ROWS);
     return {
@@ -109,7 +101,7 @@ export async function runReadOnlyQuery(sql: string): Promise<QueryResult> {
     };
   }
 
-  const pool = await getMysqlPool(config.connectionString);
+  const pool = await getMysqlPool(dbConfig.connectionString);
   const [rowsRaw, fields] = await pool.query({ sql, timeout: STATEMENT_TIMEOUT_MS });
   const allRows = rowsRaw as Record<string, unknown>[];
   const rows = allRows.slice(0, MAX_ROWS);

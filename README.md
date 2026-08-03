@@ -10,7 +10,7 @@ UI, backed by an autonomous Claude agent with its own tools (not a fixed
 script pipeline).
 
 Built on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview),
-Next.js, SQLite, and Playwright.
+Next.js, Prisma + Postgres (Neon), Cloudflare R2, and Playwright.
 
 ## How it works
 
@@ -29,15 +29,15 @@ Next.js, SQLite, and Playwright.
   dataset, validate an AI response, draft a test plan or release-readiness
   report, run a live DB check, or actually execute a browser/API test.
 - The agent has its own tools — it reads documents, saves what it extracts/
-  generates to a local SQLite store (so nothing is lost or regenerated
-  between turns), computes real stats for reports (never estimates them), and
+  generates to the database (so nothing is lost or regenerated between
+  turns), computes real stats for reports (never estimates them), and
   exports to `.xlsx` on request. It decides what to do with your request;
   this isn't a fixed script.
 - Conversation state persists per project across restarts (Claude Agent SDK
   session resume) — pick up where you left off.
 - **Tabs above the chat** (Requirements / Test Cases / Bugs / Benchmark) show
   the full saved data as real tables — every field, every row, straight from
-  SQLite — not a prose summary. The chat reply stays a concise narrative; the
+  the database — not a prose summary. The chat reply stays a concise narrative; the
   tabs are where you see the actual structured output.
 - **Documents tab**: long-form deliverables (Test Plan, Test Strategy, Daily
   QA Status, Test Summary/Defect Summary/Release Readiness/Requirement
@@ -51,6 +51,21 @@ Next.js, SQLite, and Playwright.
   Something else — instead of a blank box you have to know what to type into.
   It's still just chat underneath (each button sends a fully-formed request),
   but you don't need to know the right phrasing to get started.
+
+## Accounts & access
+
+- **Sign up / log in** with email+password, or Google (if `AUTH_GOOGLE_ID`/
+  `AUTH_GOOGLE_SECRET` are configured — see Setup below). Each project
+  belongs to exactly one account; you only ever see your own.
+- **You don't have to sign in to try it.** Anonymous use is fully supported —
+  upload a document, chat, generate test cases, everything works without an
+  account. The catch: **anything created without signing in is permanently
+  deleted 1 hour after it's created**, no exceptions, regardless of how
+  active you are in that hour. A red banner with a live countdown appears
+  whenever you're working on an anonymous project, with a link to sign up.
+  **Sign up or log in before that hour is up and the project (and everything
+  in it) becomes permanently yours instead** — nothing needs to be
+  re-created.
 
 ## What's real vs. text-only
 
@@ -76,11 +91,23 @@ write to a system your teammates see.
 
 ## Setup
 
-```bash
-npm install
-npx playwright install chromium   # one-time, ~300MB — needed for run_browser_test
-npm run dev
-```
+1. Create a free [Neon](https://neon.tech) Postgres project and copy its
+   connection string.
+2. Create a free [Cloudflare R2](https://dash.cloudflare.com) bucket and an
+   API token scoped to it (R2 → Manage API Tokens → Create API Token,
+   permissions: Object Read & Write) — this is where uploaded documents,
+   `.xlsx` exports, and generated `.docx` files live.
+3. Copy `.env.example` to `.env` and `.env.local`, and set `APP_DATABASE_URL`
+   (the Neon connection string), `AUTH_SECRET` (generate with
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`),
+   and the 4 `R2_*` variables (account ID, access key ID, secret access key,
+   bucket name).
+4. ```bash
+   npm install
+   npx playwright install chromium   # one-time, ~300MB — needed for run_browser_test
+   npx prisma migrate deploy         # creates the schema on your fresh Neon database
+   npm run dev
+   ```
 
 Open http://localhost:3000.
 
@@ -121,19 +148,69 @@ JIRA_API_TOKEN=...   # generate at https://id.atlassian.com/manage-profile/secur
 Jira Cloud only (Basic auth with an API token) — Jira Server/Data Center uses
 a different auth scheme and isn't supported here.
 
+**Monitoring & analytics (optional)**: both degrade gracefully to a no-op
+when unset, same as everything else optional in this list.
+```
+SENTRY_DSN=...       # https://sentry.io — every logger.error()/logger.fatal() call also reports here when set
+POSTHOG_API_KEY=...  # https://posthog.com — tracks signup/project_created/chat_message_sent server-side when set
+POSTHOG_HOST=         # defaults to https://us.i.posthog.com; set if your PostHog project is EU-hosted
+```
+
+## Deployment (Vercel)
+
+The app is deployment-ready — a real `npm run build` + `npm run start` are
+both verified working. What's actually left is account-level, not code:
+
+1. `vercel login` (or connect this repo via the Vercel dashboard) — needs
+   your own login, can't be done on your behalf.
+2. Set every `.env`/`.env.local` variable above as an environment variable in
+   the Vercel project settings (Neon + R2 at minimum; Sentry/PostHog/Google
+   OAuth/Resend/Jira/DB validation if you want those active in production).
+3. Deploy. `run_browser_test` automatically degrades to text-only when
+   running on Vercel (no Chromium binary in a serverless function) —
+   everything else works the same as local dev.
+
 ## Data
 
-Everything lives under `data/` (gitignored, created on first run):
+Structured data (projects, requirements, test cases, bug reports, benchmark
+rows, chat history, generated document content, user accounts) lives in
+**Postgres via [Neon](https://neon.tech)**. Files (uploaded documents,
+`.xlsx` exports, generated `.docx` files) live in **Cloudflare R2**
+(`src/lib/storage.ts`), under key prefixes mirroring what used to be local
+directories:
 
 ```
-data/
-├── qa-agent.sqlite         <- projects, requirements, test cases, bug reports, benchmark rows, chat history, generated documents
-├── uploads/<projectId>/    <- documents you've provided, per project
-├── exports/<projectId>/    <- generated .xlsx files, per project (never overwritten, timestamped)
-└── generated/<projectId>/  <- generated .docx documents (Test Plan/Strategy/Reports), per project (never overwritten, timestamped)
+uploads/<projectId>/<filename>     <- documents you've provided, per project
+exports/<projectId>/<filename>     <- generated .xlsx files, per project (never overwritten, timestamped)
+generated/<projectId>/<filename>   <- generated .docx documents (Test Plan/Strategy/Reports), per project (never overwritten, timestamped)
 ```
 
-Delete `data/` to reset everything.
+Both are the same database/bucket for local dev and production, so local dev
+needs network access to reach them — nothing is written to local disk
+anymore.
+
+## Database (Prisma + Postgres)
+
+All data access goes through Prisma (`src/lib/db.ts`) against Postgres —
+this app started on local SQLite via `node:sqlite` and was migrated off it
+entirely; see `docs/BUILD_JOURNAL.md` for the full story if you're curious
+why a given design choice exists.
+
+- `prisma/schema.prisma` — `@map`/`@@map` keep snake_case physical
+  table/column names (`req_id`, `case_id`, etc.) while the Prisma Client and
+  TypeScript code use camelCase — `db.ts`'s exported functions still return
+  the original snake_case shape the rest of the app (and the frontend) expects.
+- **Prisma 7 requires a driver adapter** for SQL databases — there's no
+  bundled engine anymore. This app uses `@prisma/adapter-pg` + `pg`.
+- `APP_DATABASE_URL` (in `.env`, loaded automatically by both the Prisma CLI
+  and Next.js) is a standard `postgresql://` connection string from your
+  Neon project's dashboard.
+- `prisma/migrations-sqlite-archive/` holds the original SQLite-era migration
+  history (kept for reference, not applied to anything anymore).
+  `prisma/migrations/0_init_postgres/` is the current baseline.
+- `npm run db:generate` — regenerate the client after editing the schema
+- `npm run db:migrate` — create/apply a new migration
+- `npm run db:studio` — browse the database in Prisma Studio
 
 ## Project structure
 
@@ -157,8 +234,8 @@ src/
       generated-documents/[projectId]/[fileName]/preview/route.ts  <- raw content for the Documents tab preview modal
       exports/[projectId]/[fileName]/route.ts  <- download a generated .xlsx
   lib/
-    db.ts                      <- SQLite schema + all data access + computeProjectStats
-    paths.ts                   <- data directory / per-project folder resolution
+    db.ts                      <- Prisma-backed data access + computeProjectStats
+    storage.ts                 <- Cloudflare R2 (S3-compatible) file storage
     systemPrompt.ts            <- the agent's persona and working instructions
     agentTools.ts               <- the agent's custom tools (document reading, save/list, DB, browser/API tests, Jira, export, save_document)
     agent.ts                    <- runs one agent turn via the Claude Agent SDK

@@ -43,3 +43,5 @@ next-env.d.ts
 
 # app data: sqlite db, uploaded documents, exported artifacts
 /data
+
+/src/generated/prisma

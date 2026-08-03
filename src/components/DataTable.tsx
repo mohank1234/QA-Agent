@@ -15,7 +15,7 @@ export function DataTable({
 }) {
   if (rows.length === 0) {
     return (
-      <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)" }}>
+      <div style={{ padding: 40, textAlign: "center", color: "var(--app-text-dim)" }}>
         {emptyLabel}
       </div>
     );
@@ -32,12 +32,12 @@ export function DataTable({
                 style={{
                   position: "sticky",
                   top: 0,
-                  background: "var(--panel)",
-                  borderBottom: "2px solid var(--border)",
+                  background: "var(--app-panel)",
+                  borderBottom: "2px solid var(--app-border)",
                   textAlign: "left",
                   padding: "8px 12px",
                   whiteSpace: "nowrap",
-                  color: "var(--text-dim)",
+                  color: "var(--app-text-dim)",
                   fontWeight: 600,
                   minWidth: col.width,
                 }}
@@ -49,7 +49,7 @@ export function DataTable({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+            <tr key={i} style={{ borderBottom: "1px solid var(--app-border)" }}>
               {columns.map((col) => {
                 const value = row[col.key];
                 const display =

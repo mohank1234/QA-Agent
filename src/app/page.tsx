@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSession, signOut } from "next-auth/react";
+import Link from "next/link";
 import { DataTable, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
@@ -8,6 +10,8 @@ type Project = {
   name: string;
   session_id: string | null;
   created_at: string;
+  guest_id?: string | null;
+  expires_at?: string | null;
 };
 
 type ChatDocument = {
@@ -128,6 +132,7 @@ function downloadLinksFrom(text: string): string[] {
 }
 
 export default function Home() {
+  const { data: session, status: sessionStatus } = useSession();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
@@ -185,17 +190,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    setActiveTab("chat");
-    if (!selectedProjectId) {
-      setMessages([]);
-      setDocuments([]);
-      setRequirements([]);
-      setTestCases([]);
-      setBugReports([]);
-      setBenchmarkRows([]);
-      setGeneratedDocuments([]);
-      return;
-    }
+    if (!selectedProjectId) return;
     fetch(`/api/chat?projectId=${selectedProjectId}`)
       .then((r) => r.json())
       .then((data) => setMessages(data.messages ?? []))
@@ -207,6 +202,26 @@ export default function Home() {
     refreshArtifacts(selectedProjectId).catch(() =>
       setError("Could not reach the server to load requirements/test cases/bugs/benchmark rows.")
     );
+  }, [selectedProjectId]);
+
+  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const showWelcome =
+    !!selectedProjectId &&
+    documents.length > 0 &&
+    messages.length === 0 &&
+    !welcomeDismissed[selectedProjectId] &&
+    activeTab === "chat";
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setMessages([]);
+      setDocuments([]);
+      setRequirements([]);
+      setTestCases([]);
+      setBugReports([]);
+      setBenchmarkRows([]);
+      setGeneratedDocuments([]);
+    }
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -233,6 +248,7 @@ export default function Home() {
       if (data.project) {
         setProjects((p) => [data.project, ...p]);
         setSelectedProjectId(data.project.id);
+        setActiveTab("chat");
         setNewProjectName("");
       }
     } catch {
@@ -393,21 +409,13 @@ export default function Home() {
     setPreviewLoading(false);
   }
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
-  const showWelcome =
-    !!selectedProjectId &&
-    documents.length > 0 &&
-    messages.length === 0 &&
-    !welcomeDismissed[selectedProjectId] &&
-    activeTab === "chat";
-
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <aside
         style={{
           width: 260,
-          borderRight: "1px solid var(--border)",
-          background: "var(--panel)",
+          borderRight: "1px solid var(--app-border)",
+          background: "var(--app-panel)",
           display: "flex",
           flexDirection: "column",
           padding: 16,
@@ -417,18 +425,60 @@ export default function Home() {
       >
         <div>
           <h1 style={{ fontSize: 16, fontWeight: 600 }}>QA Intelligence Agent</h1>
-          <p style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: "var(--app-text-dim)", marginTop: 4 }}>
             Requirement analysis · test design · benchmark generation
           </p>
         </div>
 
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: 13,
+            paddingBottom: 12,
+            borderBottom: "1px solid var(--app-border)",
+          }}
+        >
+          {sessionStatus === "loading" ? (
+            <span style={{ color: "var(--app-text-dim)" }}>…</span>
+          ) : session?.user ? (
+            <>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {session.user.email ?? session.user.name}
+              </span>
+              <button
+                onClick={() => signOut({ callbackUrl: "/login" })}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--app-text-dim)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <Link href="/login" style={{ color: "var(--app-accent)" }}>
+              Sign in
+            </Link>
+          )}
+        </div>
+
         <div>
-          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6 }}>PROJECTS</div>
+          <div style={{ fontSize: 12, color: "var(--app-text-dim)", marginBottom: 6 }}>PROJECTS</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {projects.map((p) => (
               <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
                 <button
-                  onClick={() => setSelectedProjectId(p.id)}
+                  onClick={() => {
+                    setSelectedProjectId(p.id);
+                    setActiveTab("chat");
+                  }}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -437,8 +487,8 @@ export default function Home() {
                     borderRadius: 6,
                     border: "none",
                     cursor: "pointer",
-                    background: p.id === selectedProjectId ? "var(--accent)" : "transparent",
-                    color: p.id === selectedProjectId ? "var(--accent-text)" : "var(--text)",
+                    background: p.id === selectedProjectId ? "var(--app-accent)" : "transparent",
+                    color: p.id === selectedProjectId ? "var(--app-accent-text)" : "var(--app-text)",
                     fontSize: 14,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -455,7 +505,7 @@ export default function Home() {
                     borderRadius: 6,
                     border: "none",
                     background: "transparent",
-                    color: "var(--text-dim)",
+                    color: "var(--app-text-dim)",
                     cursor: "pointer",
                     fontSize: 15,
                     lineHeight: 1,
@@ -476,9 +526,9 @@ export default function Home() {
                 flex: 1,
                 padding: "6px 8px",
                 borderRadius: 6,
-                border: "1px solid var(--border)",
-                background: "var(--bg)",
-                color: "var(--text)",
+                border: "1px solid var(--app-border)",
+                background: "var(--app-bg)",
+                color: "var(--app-text)",
                 fontSize: 13,
               }}
             />
@@ -488,8 +538,8 @@ export default function Home() {
                 padding: "6px 10px",
                 borderRadius: 6,
                 border: "none",
-                background: "var(--accent)",
-                color: "var(--accent-text)",
+                background: "var(--app-accent)",
+                color: "var(--app-accent-text)",
                 cursor: "pointer",
                 fontSize: 13,
               }}
@@ -501,12 +551,12 @@ export default function Home() {
 
         {selectedProjectId && (
           <div>
-            <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6 }}>
+            <div style={{ fontSize: 12, color: "var(--app-text-dim)", marginBottom: 6 }}>
               DOCUMENTS
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
               {documents.length === 0 && (
-                <span style={{ color: "var(--text-dim)" }}>None yet</span>
+                <span style={{ color: "var(--app-text-dim)" }}>None yet</span>
               )}
               {documents.map((d) => (
                 <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -520,7 +570,7 @@ export default function Home() {
                       padding: 0,
                       border: "none",
                       background: "transparent",
-                      color: "var(--text)",
+                      color: "var(--app-text)",
                       cursor: "pointer",
                       fontSize: 13,
                       overflow: "hidden",
@@ -536,7 +586,7 @@ export default function Home() {
                     href={`/api/documents/${selectedProjectId}/${encodeURIComponent(d.filename)}`}
                     title="Download"
                     style={{
-                      color: "var(--text-dim)",
+                      color: "var(--app-text-dim)",
                       textDecoration: "none",
                       fontSize: 13,
                       padding: "0 2px",
@@ -567,9 +617,9 @@ export default function Home() {
                 width: "100%",
                 padding: "6px 10px",
                 borderRadius: 6,
-                border: "1px solid var(--border)",
+                border: "1px solid var(--app-border)",
                 background: "transparent",
-                color: "var(--text)",
+                color: "var(--app-text)",
                 cursor: "pointer",
                 fontSize: 13,
               }}
@@ -581,9 +631,22 @@ export default function Home() {
       </aside>
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {sessionStatus !== "loading" && !session?.user && selectedProject?.expires_at && (
+          <GuestExpiryBanner expiresAt={selectedProject.expires_at} />
+        )}
         {!selectedProject ? (
-          <div style={{ margin: "auto", color: "var(--text-dim)" }}>
-            Create or select a project to start.
+          <div style={{ margin: "auto", textAlign: "center", color: "var(--app-text-dim)" }}>
+            <div>Create or select a project to start.</div>
+            {sessionStatus !== "loading" && !session?.user && (
+              <div style={{ fontSize: 12, marginTop: 8, maxWidth: 360 }}>
+                Not signed in — anything you create will be permanently deleted 1 hour after
+                creation.{" "}
+                <Link href="/signup" style={{ color: "var(--app-accent)" }}>
+                  Sign up
+                </Link>{" "}
+                first to keep your work.
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -592,7 +655,7 @@ export default function Home() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                borderBottom: "1px solid var(--border)",
+                borderBottom: "1px solid var(--app-border)",
               }}
             >
               <div style={{ padding: "12px 20px", fontSize: 14, fontWeight: 600 }}>
@@ -610,8 +673,8 @@ export default function Home() {
                       cursor: "pointer",
                       fontSize: 13,
                       fontWeight: activeTab === tab.id ? 600 : 400,
-                      color: activeTab === tab.id ? "var(--accent)" : "var(--text-dim)",
-                      borderBottom: activeTab === tab.id ? "2px solid var(--accent)" : "2px solid transparent",
+                      color: activeTab === tab.id ? "var(--app-accent)" : "var(--app-text-dim)",
+                      borderBottom: activeTab === tab.id ? "2px solid var(--app-accent)" : "2px solid transparent",
                     }}
                   >
                     {tab.label}
@@ -677,9 +740,9 @@ export default function Home() {
                             style={{
                               padding: "10px 16px",
                               borderRadius: 8,
-                              border: "1px solid var(--border)",
-                              background: "var(--panel)",
-                              color: "var(--text)",
+                              border: "1px solid var(--app-border)",
+                              background: "var(--app-panel)",
+                              color: "var(--app-text)",
                               cursor: "pointer",
                               fontSize: 14,
                             }}
@@ -692,9 +755,9 @@ export default function Home() {
                           style={{
                             padding: "10px 16px",
                             borderRadius: 8,
-                            border: "1px dashed var(--border)",
+                            border: "1px dashed var(--app-border)",
                             background: "transparent",
-                            color: "var(--text-dim)",
+                            color: "var(--app-text-dim)",
                             cursor: "pointer",
                             fontSize: 14,
                           }}
@@ -709,7 +772,7 @@ export default function Home() {
                         <ChatBubble key={i} message={m} onPreviewDocument={openChatDocumentPreview} />
                       ))}
                       {sending && (
-                        <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "4px 0" }}>
+                        <div style={{ color: "var(--app-text-dim)", fontSize: 13, padding: "4px 0" }}>
                           Thinking…
                         </div>
                       )}
@@ -718,7 +781,7 @@ export default function Home() {
                   <div ref={messagesEndRef} />
                 </div>
                 {error && (
-                  <div style={{ color: "var(--danger)", fontSize: 13, padding: "0 20px 8px" }}>
+                  <div style={{ color: "var(--app-danger)", fontSize: 13, padding: "0 20px 8px" }}>
                     {error}
                   </div>
                 )}
@@ -727,7 +790,7 @@ export default function Home() {
                     display: "flex",
                     gap: 8,
                     padding: 16,
-                    borderTop: "1px solid var(--border)",
+                    borderTop: "1px solid var(--app-border)",
                   }}
                 >
                   <textarea
@@ -746,9 +809,9 @@ export default function Home() {
                       resize: "none",
                       padding: 10,
                       borderRadius: 8,
-                      border: "1px solid var(--border)",
-                      background: "var(--panel)",
-                      color: "var(--text)",
+                      border: "1px solid var(--app-border)",
+                      background: "var(--app-panel)",
+                      color: "var(--app-text)",
                       fontSize: 14,
                     }}
                   />
@@ -759,8 +822,8 @@ export default function Home() {
                       padding: "0 20px",
                       borderRadius: 8,
                       border: "none",
-                      background: "var(--accent)",
-                      color: "var(--accent-text)",
+                      background: "var(--app-accent)",
+                      color: "var(--app-accent-text)",
                       cursor: sending ? "default" : "pointer",
                       opacity: sending || !chatInput.trim() ? 0.6 : 1,
                       fontSize: 14,
@@ -789,6 +852,62 @@ export default function Home() {
   );
 }
 
+function formatCountdown(msRemaining: number): string {
+  if (msRemaining <= 0) return "any moment now";
+  const totalSeconds = Math.floor(msRemaining / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function GuestExpiryBanner({ expiresAt }: { expiresAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const msRemaining = new Date(expiresAt).getTime() - now;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        padding: "10px 20px",
+        background: "var(--app-danger)",
+        color: "#fff",
+        fontSize: 13,
+        fontWeight: 500,
+        textAlign: "center",
+      }}
+    >
+      <span>
+        ⚠ You&rsquo;re using QA Agent as a guest — this project and everything in it will be{" "}
+        <strong>permanently deleted in {formatCountdown(msRemaining)}</strong>.
+      </span>
+      <Link
+        href="/signup"
+        style={{
+          color: "#fff",
+          background: "rgba(255,255,255,0.2)",
+          padding: "3px 10px",
+          borderRadius: 6,
+          textDecoration: "none",
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+        }}
+      >
+        Sign up to keep it
+      </Link>
+    </div>
+  );
+}
+
 function GeneratedDocumentsList({
   documents,
   projectId,
@@ -800,8 +919,8 @@ function GeneratedDocumentsList({
 }) {
   if (documents.length === 0) {
     return (
-      <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)" }}>
-        No documents generated yet. Ask for a Test Plan, Test Strategy, or a report and it'll
+      <div style={{ padding: 40, textAlign: "center", color: "var(--app-text-dim)" }}>
+        No documents generated yet. Ask for a Test Plan, Test Strategy, or a report and it will
         show up here as a real, downloadable Word document.
       </div>
     );
@@ -810,12 +929,12 @@ function GeneratedDocumentsList({
   const thStyle = {
     position: "sticky" as const,
     top: 0,
-    background: "var(--panel)",
-    borderBottom: "2px solid var(--border)",
+    background: "var(--app-panel)",
+    borderBottom: "2px solid var(--app-border)",
     textAlign: "left" as const,
     padding: "8px 12px",
     whiteSpace: "nowrap" as const,
-    color: "var(--text-dim)",
+    color: "var(--app-text-dim)",
     fontWeight: 600,
   };
   const tdStyle = {
@@ -836,7 +955,7 @@ function GeneratedDocumentsList({
         </thead>
         <tbody>
           {documents.map((doc) => (
-            <tr key={doc.id} style={{ borderBottom: "1px solid var(--border)" }}>
+            <tr key={doc.id} style={{ borderBottom: "1px solid var(--app-border)" }}>
               <td style={tdStyle}>{doc.title}</td>
               <td style={tdStyle}>{doc.doc_type.replace(/_/g, " ")}</td>
               <td style={tdStyle}>{new Date(doc.created_at).toLocaleString()}</td>
@@ -846,7 +965,7 @@ function GeneratedDocumentsList({
                   style={{
                     border: "none",
                     background: "transparent",
-                    color: "var(--accent)",
+                    color: "var(--app-accent)",
                     cursor: "pointer",
                     fontSize: 13,
                     padding: 0,
@@ -858,7 +977,7 @@ function GeneratedDocumentsList({
                 {" · "}
                 <a
                   href={`/api/generated-documents/${projectId}/${encodeURIComponent(doc.filename)}`}
-                  style={{ color: "var(--accent)", textDecoration: "underline", fontSize: 13 }}
+                  style={{ color: "var(--app-accent)", textDecoration: "underline", fontSize: 13 }}
                 >
                   ⬇ Download
                 </a>
@@ -903,9 +1022,9 @@ function DocumentPreviewModal({
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "var(--panel)",
+          background: "var(--app-panel)",
           borderRadius: 10,
-          border: "1px solid var(--border)",
+          border: "1px solid var(--app-border)",
           width: "100%",
           maxWidth: 800,
           maxHeight: "85vh",
@@ -920,7 +1039,7 @@ function DocumentPreviewModal({
             justifyContent: "space-between",
             gap: 12,
             padding: "12px 16px",
-            borderBottom: "1px solid var(--border)",
+            borderBottom: "1px solid var(--app-border)",
           }}
         >
           <div
@@ -937,7 +1056,7 @@ function DocumentPreviewModal({
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexShrink: 0 }}>
             <a
               href={downloadHref}
-              style={{ fontSize: 13, color: "var(--accent)", textDecoration: "underline" }}
+              style={{ fontSize: 13, color: "var(--app-accent)", textDecoration: "underline" }}
             >
               ⬇ Download
             </a>
@@ -946,7 +1065,7 @@ function DocumentPreviewModal({
               style={{
                 border: "none",
                 background: "transparent",
-                color: "var(--text-dim)",
+                color: "var(--app-text-dim)",
                 cursor: "pointer",
                 fontSize: 18,
                 lineHeight: 1,
@@ -958,8 +1077,8 @@ function DocumentPreviewModal({
           </div>
         </div>
         <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
-          {loading && <div style={{ color: "var(--text-dim)", fontSize: 13 }}>Loading preview…</div>}
-          {error && <div style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>}
+          {loading && <div style={{ color: "var(--app-text-dim)", fontSize: 13 }}>Loading preview…</div>}
+          {error && <div style={{ color: "var(--app-danger)", fontSize: 13 }}>{error}</div>}
           {!loading && !error && (
             <pre
               style={{
@@ -969,7 +1088,7 @@ function DocumentPreviewModal({
                 fontSize: 13,
                 lineHeight: 1.5,
                 margin: 0,
-                color: "var(--text)",
+                color: "var(--app-text)",
               }}
             >
               {text}
@@ -991,7 +1110,7 @@ function ChatBubble({
   const isUser = message.role === "user";
   const links = message.role === "assistant" ? downloadLinksFrom(message.content) : [];
   const documents = message.documents ?? [];
-  const linkColor = isUser ? "var(--bubble-user-text)" : "var(--accent)";
+  const linkColor = isUser ? "var(--app-bubble-user-text)" : "var(--app-accent)";
 
   return (
     <div
@@ -1009,8 +1128,8 @@ function ChatBubble({
           whiteSpace: "pre-wrap",
           fontSize: 14,
           lineHeight: 1.5,
-          background: isUser ? "var(--bubble-user)" : "var(--bubble-assistant)",
-          color: isUser ? "var(--bubble-user-text)" : "var(--bubble-assistant-text)",
+          background: isUser ? "var(--app-bubble-user)" : "var(--app-bubble-assistant)",
+          color: isUser ? "var(--app-bubble-user-text)" : "var(--app-bubble-assistant-text)",
         }}
       >
         {message.content}

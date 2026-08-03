@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// `id String @id` (required, not nullable) — moot on Postgres (a PRIMARY KEY
+// always implies NOT NULL here, unlike the SQLite TEXT-primary-key quirk this
+// schema originally had to work around). Kept as-is since it's simply
+// correct either way, and every insert path already always sets id via
+// randomUUID(). See docs/BUILD_JOURNAL.md for the SQLite-era history.
+
+model Project {
+  id        String  @id @default(uuid())
+  name      String
+  sessionId String? @map("session_id")
+  createdAt String  @map("created_at")
+  ownerId   String? @map("owner_id")
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+  // Anonymous (not-signed-in) usage: set instead of ownerId, cleared and
+  // replaced by ownerId if the guest signs up/in before expiry (see
+  // claimGuestProjects in db.ts). expiresAt is fixed at creation time (now +
+  // 1h) and never extended — a background sweep (src/lib/projectCleanup.ts)
+  // deletes anything past it, regardless of how active the guest is.
+  guestId   String? @map("guest_id")
+  expiresAt String? @map("expires_at")
+
+  @@index([ownerId], map: "idx_projects_owner")
+  @@index([guestId], map: "idx_projects_guest")
+  @@map("projects")
+}
+
+model Document {
+  id         String @id @default(uuid())
+  projectId  String @map("project_id")
+  filename   String
+  filePath   String @map("file_path")
+  uploadedAt String @map("uploaded_at")
+
+  @@index([projectId], map: "idx_documents_project")
+  @@map("documents")
+}
+
+model Requirement {
+  id             String  @id @default(uuid())
+  projectId      String  @map("project_id")
+  reqId          String  @map("req_id")
+  reqType        String? @map("req_type")
+  description    String
+  isAssumption   Int     @default(0) @map("is_assumption")
+  sourceDocument String? @map("source_document")
+  createdAt      String  @map("created_at")
+
+  @@index([projectId], map: "idx_requirements_project")
+  @@map("requirements")
+}
+
+model TestCase {
+  id                String  @id @default(uuid())
+  projectId         String  @map("project_id")
+  caseId            String  @map("case_id")
+  requirementRef    String? @map("requirement_ref")
+  module            String?
+  testType          String? @map("test_type")
+  priority          String?
+  severity          String?
+  preconditions     String?
+  steps             String?
+  expectedResult    String? @map("expected_result")
+  testData          String? @map("test_data")
+  sourceRequirement String? @map("source_requirement")
+  createdAt         String  @map("created_at")
+
+  @@index([projectId], map: "idx_test_cases_project")
+  @@map("test_cases")
+}
+
+model BenchmarkRow {
+  id               String  @id @default(uuid())
+  projectId        String  @map("project_id")
+  sNo              Int?    @map("s_no")
+  agent            String?
+  question         String
+  queryCategory    String? @map("query_category")
+  scenarioType     String? @map("scenario_type")
+  expectedAnswer   String? @map("expected_answer")
+  answerInTesting  String? @map("answer_in_testing")
+  score            Float?
+  sourceDocument   String? @map("source_document")
+  notes            String?
+  passFail         String? @map("pass_fail")
+  createdAt        String  @map("created_at")
+
+  @@index([projectId], map: "idx_benchmark_rows_project")
+  @@map("benchmark_rows")
+}
+
+model BugReport {
+  id                   String  @id @default(uuid())
+  projectId            String  @map("project_id")
+  bugId                String  @map("bug_id")
+  title                String
+  description          String?
+  stepsToReproduce     String? @map("steps_to_reproduce")
+  expectedResult       String? @map("expected_result")
+  actualResult         String? @map("actual_result")
+  severity             String?
+  priority             String?
+  environment          String?
+  rootCauseSuggestion  String? @map("root_cause_suggestion")
+  sourceTestCase       String? @map("source_test_case")
+  status               String  @default("Open")
+  createdAt            String  @map("created_at")
+
+  @@index([projectId], map: "idx_bug_reports_project")
+  @@map("bug_reports")
+}
+
+model Message {
+  id            String  @id @default(uuid())
+  projectId     String  @map("project_id")
+  role          String
+  content       String
+  createdAt     String  @map("created_at")
+  documentsJson String? @map("documents_json")
+
+  @@index([projectId], map: "idx_messages_project")
+  @@map("messages")
+}
+
+model GeneratedDocument {
+  id        String @id @default(uuid())
+  projectId String @map("project_id")
+  title     String
+  docType   String @map("doc_type")
+  filename  String
+  content   String
+  createdAt String @map("created_at")
+
+  @@index([projectId], map: "idx_generated_documents_project")
+  @@map("generated_documents")
+}
+
+// --- Auth (Auth.js / next-auth v5, @auth/prisma-adapter) ---------------
+//
+// Field names on User/Account/Session/VerificationToken below are NOT free
+// to rename via @map the way the app models above are: @auth/prisma-adapter
+// passes objects straight through to `prisma.account.create({ data })` etc.
+// (verified by reading its actual source in
+// node_modules/@auth/prisma-adapter/index.js — it does no key remapping),
+// and relies on Prisma's *default* auto-generated compound-unique names
+// (`provider_providerAccountId`, `identifier_token`). Renaming a field or
+// naming a @@unique breaks the adapter silently. Table names (@@map) and
+// wholly custom fields (passwordHash, PasswordResetToken) are safe to
+// rename/map freely since the adapter never touches them.
+
+model User {
+  id            String    @id @default(uuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  // Null for OAuth-only users (e.g. signed up via Google, never set a password).
+  passwordHash  String?   @map("password_hash")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  accounts            Account[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Custom (not part of Auth.js's adapter contract) — backs the
+// email/password "forgot password" flow.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_password_reset_tokens_user")
+  @@map("password_reset_tokens")
+}

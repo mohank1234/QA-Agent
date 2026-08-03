@@ -41,6 +41,20 @@ export async function runPlaywrightScript(
   script: string,
   options: { url?: string; timeoutMs?: number } = {}
 ): Promise<AutomationResult> {
+  // VERCEL is set automatically in every Vercel deployment. Serverless
+  // functions there don't have the ~300MB Chromium binary
+  // `npx playwright install chromium` downloads locally (not bundled into
+  // the deployment, and wouldn't fit typical function size limits anyway) —
+  // fail with one clear, expected message here rather than a confusing
+  // "executable doesn't exist" error surfacing from deep inside Playwright
+  // once chromium.launch() actually attempts to run. Same graceful-degrade
+  // pattern this app already uses for Selenium/Cypress/etc.
+  if (process.env.VERCEL) {
+    throw new Error(
+      "Real browser test execution isn't available in this hosted environment (no Chromium binary here). I can still generate the Playwright script as text — say so if that's useful — or you can run it locally where this is fully supported."
+    );
+  }
+
   const timeoutMs = Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
   // NOT require.resolve("playwright") here: under Next.js/Turbopack this
   // server module is bundled, and Turbopack rewrites require.resolve() of an

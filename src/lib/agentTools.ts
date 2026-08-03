@@ -1,5 +1,3 @@
-import path from "node:path";
-import fs from "node:fs";
 import { z } from "zod";
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { extractDocumentText } from "./tools/readDocument";
@@ -23,7 +21,8 @@ import {
   saveGeneratedDocument,
   listGeneratedDocuments,
 } from "./db";
-import { projectUploadsDir, projectGeneratedDocsDir } from "./paths";
+import { uploadKey, generatedDocKey, putObject, getObject } from "./storage";
+import { logger } from "./logger";
 
 function slugify(value: string): string {
   return (
@@ -50,15 +49,6 @@ function text(payload: unknown) {
   };
 }
 
-function resolveUploadedFile(projectId: string, filename: string): string {
-  const dir = projectUploadsDir(projectId);
-  const resolved = path.resolve(dir, filename);
-  if (!resolved.startsWith(path.resolve(dir))) {
-    throw new Error("Invalid file name.");
-  }
-  return resolved;
-}
-
 export type SavedDocumentInfo = {
   title: string;
   docType: string;
@@ -75,7 +65,7 @@ export function buildProjectTools(
     "List the documents that have been provided for this project, with their file names.",
     {},
     async () => {
-      const docs = listDocuments(projectId) as { filename: string; uploaded_at: string }[];
+      const docs = await listDocuments(projectId);
       if (docs.length === 0) {
         return text("No documents have been provided for this project yet.");
       }
@@ -88,8 +78,16 @@ export function buildProjectTools(
     "Read and extract the text content of a document previously provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD). Pass the exact file name as returned by list_documents.",
     { filename: z.string().describe("Exact file name, e.g. 'PRD.pdf'") },
     async ({ filename }) => {
-      const filePath = resolveUploadedFile(projectId, filename);
-      const content = await extractDocumentText(filePath);
+      // filename here comes straight from the LLM's tool-call argument, not
+      // from an HTTP route already sanitized by path.basename() — this is
+      // the actual first line of defense against a poisoned document
+      // convincing the agent to read an arbitrary key. uploadKey() applies
+      // path.basename() internally before it ever becomes part of the key.
+      const buffer = await getObject(uploadKey(projectId, filename));
+      if (!buffer) {
+        return text({ error: `File "${filename}" not found.` });
+      }
+      const content = await extractDocumentText(buffer, filename);
       return text(content);
     }
   );
@@ -117,7 +115,7 @@ export function buildProjectTools(
         .min(1),
     },
     async ({ requirements }) => {
-      for (const r of requirements) insertRequirement(projectId, r);
+      for (const r of requirements) await insertRequirement(projectId, r);
       return text(`Saved ${requirements.length} requirement(s).`);
     }
   );
@@ -126,7 +124,7 @@ export function buildProjectTools(
     "list_requirements",
     "List all requirements previously saved for this project (avoid re-deriving or duplicating these).",
     {},
-    async () => text(listRequirementsForProject(projectId))
+    async () => text(await listRequirementsForProject(projectId))
   );
 
   const save_test_cases = tool(
@@ -154,7 +152,7 @@ export function buildProjectTools(
         .min(1),
     },
     async ({ testCases }) => {
-      for (const t of testCases) insertTestCase(projectId, t);
+      for (const t of testCases) await insertTestCase(projectId, t);
       return text(`Saved ${testCases.length} test case(s).`);
     }
   );
@@ -163,7 +161,7 @@ export function buildProjectTools(
     "list_test_cases",
     "List all test cases previously saved for this project.",
     {},
-    async () => text(listTestCasesForProject(projectId))
+    async () => text(await listTestCasesForProject(projectId))
   );
 
   const save_benchmark_rows = tool(
@@ -189,7 +187,7 @@ export function buildProjectTools(
         .min(1),
     },
     async ({ rows }) => {
-      for (const r of rows) insertBenchmarkRow(projectId, r);
+      for (const r of rows) await insertBenchmarkRow(projectId, r);
       return text(`Saved ${rows.length} benchmark row(s).`);
     }
   );
@@ -198,7 +196,7 @@ export function buildProjectTools(
     "list_benchmark_rows",
     "List all benchmark dataset rows previously saved for this project.",
     {},
-    async () => text(listBenchmarkRowsForProject(projectId))
+    async () => text(await listBenchmarkRowsForProject(projectId))
   );
 
   const save_bug_reports = tool(
@@ -228,7 +226,7 @@ export function buildProjectTools(
         .min(1),
     },
     async ({ bugReports }) => {
-      for (const b of bugReports) insertBugReport(projectId, b);
+      for (const b of bugReports) await insertBugReport(projectId, b);
       return text(`Saved ${bugReports.length} bug report(s).`);
     }
   );
@@ -237,7 +235,7 @@ export function buildProjectTools(
     "list_bug_reports",
     "List all bug reports previously saved for this project — this doubles as the internal Kanban view (group by status) when no PM tool is connected.",
     {},
-    async () => text(listBugReportsForProject(projectId))
+    async () => text(await listBugReportsForProject(projectId))
   );
 
   const get_project_stats = tool(
@@ -245,7 +243,7 @@ export function buildProjectTools(
     "Get real, computed counts and rates for this project (requirement/test-case/bug/benchmark totals, requirement coverage, bug counts by status and severity, benchmark pass rate and average score). Always call this before writing any report (Daily QA Status, Test Execution Report, Test Summary, Defect Summary, Benchmark Summary, Regression Report, Release Readiness, Requirement Coverage) — use these numbers verbatim rather than counting rows yourself from list_* output, so reports never misstate a total.",
     {},
     async () => {
-      const stats = computeProjectStats(projectId);
+      const stats = await computeProjectStats(projectId);
       const requirementCoveragePercent =
         stats.requirementCount === 0
           ? null
@@ -280,7 +278,7 @@ export function buildProjectTools(
         const result = await runReadOnlyQuery(sql);
         return text(result);
       } catch (err) {
-        console.error("run_readonly_query failed:", err);
+        logger.error({ err, projectId }, "run_readonly_query failed");
         const code = (err as { code?: string })?.code;
         const message = err instanceof Error ? err.message : String(err);
         return text({ error: [code, message].filter(Boolean).join(": ") || "Unknown database error." });
@@ -305,7 +303,7 @@ export function buildProjectTools(
         const result = await runPlaywrightScript(script, { url, timeoutMs });
         return text(result);
       } catch (err) {
-        console.error("run_browser_test failed:", err);
+        logger.error({ err, projectId }, "run_browser_test failed");
         return text({ error: err instanceof Error ? err.message : String(err) });
       }
     }
@@ -327,7 +325,7 @@ export function buildProjectTools(
         const result = await runApiTestScript(script, timeoutMs);
         return text(result);
       } catch (err) {
-        console.error("run_api_test failed:", err);
+        logger.error({ err, projectId }, "run_api_test failed");
         return text({ error: err instanceof Error ? err.message : String(err) });
       }
     }
@@ -454,9 +452,12 @@ export function buildProjectTools(
       try {
         const buffer = await markdownToDocxBuffer(title, content);
         const fileName = `${timestamp()}_${slugify(title)}.docx`;
-        const filePath = path.join(projectGeneratedDocsDir(projectId), fileName);
-        fs.writeFileSync(filePath, buffer);
-        saveGeneratedDocument(projectId, title, docType, fileName, content);
+        await putObject(
+          generatedDocKey(projectId, fileName),
+          buffer,
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        await saveGeneratedDocument(projectId, title, docType, fileName, content);
         const previewUrl = `/api/generated-documents/${projectId}/${fileName}/preview`;
         const downloadUrl = `/api/generated-documents/${projectId}/${fileName}`;
         onDocumentSaved?.({ title, docType, previewUrl, downloadUrl });
@@ -466,8 +467,8 @@ export function buildProjectTools(
           downloadUrl,
         });
       } catch (err) {
-        console.error("save_document failed:", err);
-        return text({ error: err instanceof Error ? err.stack ?? err.message : String(err) });
+        logger.error({ err, projectId }, "save_document failed");
+        return text({ error: err instanceof Error ? err.message : String(err) });
       }
     }
   );
@@ -477,7 +478,7 @@ export function buildProjectTools(
     "List narrative documents (Test Plans, Reports, etc.) already generated for this project, so you don't regenerate one that already exists unless asked to.",
     {},
     async () => {
-      const docs = listGeneratedDocuments(projectId);
+      const docs = await listGeneratedDocuments(projectId);
       if (docs.length === 0) {
         return text("No documents have been generated for this project yet.");
       }
@@ -493,14 +494,14 @@ export function buildProjectTools(
     },
     async ({ kind }) => {
       try {
-        const result = exportProjectArtifact(projectId, kind as ExportKind);
+        const result = await exportProjectArtifact(projectId, kind as ExportKind);
         return text({
           message: `Exported ${result.rowCount} row(s).`,
           downloadUrl: `/api/exports/${projectId}/${result.fileName}`,
         });
       } catch (err) {
-        console.error("export_artifact failed:", err);
-        return text({ error: err instanceof Error ? err.stack ?? err.message : String(err) });
+        logger.error({ err, projectId }, "export_artifact failed");
+        return text({ error: err instanceof Error ? err.message : String(err) });
       }
     }
   );
