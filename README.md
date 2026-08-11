@@ -4,8 +4,10 @@ A personal, general-purpose QA copilot. Point it at any project's requirements
 documents (BRD/PRD/specs/API docs/etc.) and it analyzes them, generates
 traceable test cases and RTMs, tracks bug reports (with optional Jira sync),
 builds AI/RAG benchmark datasets, runs real read-only database checks, real
-Playwright browser tests, and real API tests, generates reports from live
-computed stats, and exports everything to real `.xlsx` files — through a chat
+Playwright browser tests, and real API tests — recording every run with
+captured evidence, auto-drafting defects from real failures, and verifying
+fixes by re-running the same test — generates reports from live computed run
+data, and exports everything to real `.xlsx` files — through a chat
 UI, backed by an autonomous Claude agent with its own tools (not a fixed
 script pipeline).
 
@@ -35,10 +37,13 @@ Next.js, Prisma + Postgres (Neon), Cloudflare R2, and Playwright.
   this isn't a fixed script.
 - Conversation state persists per project across restarts (Claude Agent SDK
   session resume) — pick up where you left off.
-- **Tabs above the chat** (Requirements / Test Cases / Bugs / Benchmark) show
-  the full saved data as real tables — every field, every row, straight from
-  the database — not a prose summary. The chat reply stays a concise narrative; the
-  tabs are where you see the actual structured output.
+- **Tabs above the chat** (Requirements / Scenarios / Test Cases / Executions /
+  Bugs / Benchmark) show the full saved data as real tables — every field,
+  every row, straight from the database — not a prose summary. The chat reply
+  stays a concise narrative; the tabs are where you see the actual structured
+  output. Test Cases carry their real Actual Result / Status / Last Executed
+  once run, and the Executions tab links straight to each run's captured
+  evidence.
 - **Documents tab**: long-form deliverables (Test Plan, Test Strategy, Daily
   QA Status, Test Summary/Defect Summary/Release Readiness/Requirement
   Coverage reports) are saved as real `.docx` Word documents — headings,
@@ -72,10 +77,14 @@ Next.js, Prisma + Postgres (Neon), Cloudflare R2, and Playwright.
 | Capability | Status |
 |---|---|
 | Requirement analysis, RTM, test case generation, benchmark datasets, bug reports | Persisted + exportable to `.xlsx` |
-| Test Plan, Test Strategy, and all Reports (Daily Status, Test Execution, Defect Summary, Release Readiness, etc.) | Generated from live computed stats (`get_project_stats`), not estimated — saved as real `.docx` files in the Documents tab, not pasted into chat |
+| Test Plan, Test Strategy, and all Reports (Daily Status, Test Execution, Defect Summary, Release Readiness, etc.) | Generated from live computed stats (`get_project_stats` / `get_report_data`), not estimated — saved as real `.docx` files in the Documents tab, not pasted into chat |
+| Test Execution / Regression / Release Readiness figures | Computed from **real recorded test runs**, not from how many test cases were written. Design counts and execution counts are kept separate, and a project with nothing executed is reported as such rather than given a pass rate |
 | Database validation | **Really executes** read-only (SELECT-only) queries when `DB_ENGINE`/`DATABASE_URL` are configured; generates SQL as text otherwise |
-| Playwright browser tests | **Really executes** in a real headless Chromium child process and reports the actual pass/fail |
-| API tests | **Really executes** via Node's built-in `fetch` + assert, no Java/Postman needed |
+| Playwright browser tests | **Really executes** in a real headless Chromium child process, reports the actual pass/fail, and **persists every run** (`TestRun`/`TestExecution`) linked to its test case |
+| Test evidence | **Really captured** on browser runs — Playwright trace, console log always; screenshot, video, and network HAR on failure — uploaded to R2 and attachable to bug reports. Attachments can only come from a real run; they cannot be written by hand |
+| Long-running tests (idle/session timeout) | **Really supported** — runs needing more than 3 minutes detach and execute in the background (45-minute ceiling), polled via run status. Requires a persistent server (not serverless) |
+| Multi-tab / multi-session tests | **Really supported** — a test body can open additional tabs sharing the session, or fully isolated contexts, and reuse a saved authenticated session across runs |
+| API tests | **Really executes** via Node's built-in `fetch` + assert, no Java/Postman needed — also persisted as runs |
 | Jira | **Really reads/writes** when configured (search, get, create issue, transition, comment) — writes are confirmation-gated, see below |
 | Azure DevOps/GitHub Projects/Linear | Not connected — offers a Jira-equivalent text draft instead |
 | Selenium/Cypress/Appium/Pytest | Not connected — generates script text only (Playwright covers real browser execution; the API test tool covers what REST Assured/Postman would) |
