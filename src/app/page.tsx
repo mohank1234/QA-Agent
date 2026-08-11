@@ -45,7 +45,9 @@ type GeneratedDocument = {
 type Tab =
   | "chat"
   | "requirements"
+  | "test_scenarios"
   | "test_cases"
+  | "executions"
   | "bug_reports"
   | "benchmark"
   | "generated_documents";
@@ -53,7 +55,9 @@ type Tab =
 const TABS: { id: Tab; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "requirements", label: "Requirements" },
+  { id: "test_scenarios", label: "Scenarios" },
   { id: "test_cases", label: "Test Cases" },
+  { id: "executions", label: "Executions" },
   { id: "bug_reports", label: "Bugs" },
   { id: "benchmark", label: "Benchmark" },
   { id: "generated_documents", label: "Documents" },
@@ -67,32 +71,61 @@ const REQUIREMENT_COLUMNS: ColumnDef[] = [
   { key: "source_document", label: "Source Document", width: "170px" },
 ];
 
+const TEST_SCENARIO_COLUMNS: ColumnDef[] = [
+  { key: "scenario_id", label: "Scenario ID", width: "110px" },
+  { key: "scenario", label: "Scenario" },
+  { key: "priority", label: "Priority", width: "80px" },
+  { key: "source_requirement", label: "Requirement Mapping", width: "150px" },
+];
+
 const TEST_CASE_COLUMNS: ColumnDef[] = [
   { key: "case_id", label: "Test Case ID", width: "110px" },
   { key: "source_requirement", label: "Requirement Mapping", width: "150px" },
+  { key: "scenario_ref", label: "Scenario", width: "110px" },
   { key: "module", label: "Module", width: "140px" },
   { key: "test_type", label: "Test Type", width: "110px" },
   { key: "priority", label: "Priority", width: "80px" },
   { key: "severity", label: "Severity", width: "80px" },
   { key: "preconditions", label: "Preconditions" },
+  { key: "test_data", label: "Test Data" },
   { key: "steps", label: "Test Steps" },
   { key: "expected_result", label: "Expected Result" },
-  { key: "test_data", label: "Test Data" },
+  { key: "actual_result", label: "Actual Result" },
+  { key: "status", label: "Status", width: "90px" },
+  { key: "last_executed_at", label: "Last Executed", width: "160px" },
+  { key: "comments", label: "Comments" },
+];
+
+const EXECUTION_COLUMNS: ColumnDef[] = [
+  { key: "executed_at", label: "Executed At", width: "170px" },
+  { key: "case_id", label: "Test Case", width: "120px" },
+  { key: "result", label: "Result", width: "80px" },
+  { key: "run_label", label: "Run", width: "170px" },
+  { key: "duration_ms", label: "Duration (ms)", width: "110px" },
+  { key: "evidence", label: "Evidence", width: "230px" },
+  { key: "actual_result", label: "Actual Result" },
+  { key: "error_message", label: "Error" },
 ];
 
 const BUG_COLUMNS: ColumnDef[] = [
   { key: "bug_id", label: "Bug ID", width: "90px" },
-  { key: "title", label: "Title" },
-  { key: "description", label: "Description" },
-  { key: "steps_to_reproduce", label: "Steps to Reproduce" },
-  { key: "expected_result", label: "Expected Result" },
-  { key: "actual_result", label: "Actual Result" },
+  { key: "title", label: "Title / Summary" },
+  { key: "module", label: "Module", width: "130px" },
+  { key: "environment", label: "Environment", width: "110px" },
   { key: "severity", label: "Severity", width: "80px" },
   { key: "priority", label: "Priority", width: "80px" },
-  { key: "environment", label: "Environment", width: "110px" },
+  { key: "status", label: "Status", width: "100px" },
+  { key: "preconditions", label: "Preconditions" },
+  { key: "test_data", label: "Test Data" },
+  { key: "description", label: "Description" },
+  { key: "steps_to_reproduce", label: "Steps to Reproduce" },
+  { key: "actual_result", label: "Actual Result" },
+  { key: "expected_result", label: "Expected Result" },
+  { key: "frequency", label: "Frequency", width: "100px" },
   { key: "root_cause_suggestion", label: "Root Cause Suggestion" },
   { key: "source_test_case", label: "Source Test Case", width: "120px" },
-  { key: "status", label: "Status", width: "100px" },
+  { key: "attachments", label: "Attachments", width: "230px" },
+  { key: "comments", label: "Comments" },
 ];
 
 const BENCHMARK_COLUMNS: ColumnDef[] = [
@@ -146,7 +179,9 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [welcomeDismissed, setWelcomeDismissed] = useState<Record<string, boolean>>({});
   const [requirements, setRequirements] = useState<Record<string, unknown>[]>([]);
+  const [testScenarios, setTestScenarios] = useState<Record<string, unknown>[]>([]);
   const [testCases, setTestCases] = useState<Record<string, unknown>[]>([]);
+  const [executions, setExecutions] = useState<Record<string, unknown>[]>([]);
   const [bugReports, setBugReports] = useState<Record<string, unknown>[]>([]);
   const [benchmarkRows, setBenchmarkRows] = useState<Record<string, unknown>[]>([]);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
@@ -169,22 +204,28 @@ export default function Home() {
   }, []);
 
   async function refreshArtifacts(projectId: string) {
-    const [reqRes, tcRes, bugRes, benchRes, docRes] = await Promise.all([
+    const [reqRes, scnRes, tcRes, execRes, bugRes, benchRes, docRes] = await Promise.all([
       fetch(`/api/requirements?projectId=${projectId}`),
+      fetch(`/api/test-scenarios?projectId=${projectId}`),
       fetch(`/api/test-cases?projectId=${projectId}`),
+      fetch(`/api/test-runs?projectId=${projectId}`),
       fetch(`/api/bug-reports?projectId=${projectId}`),
       fetch(`/api/benchmark-rows?projectId=${projectId}`),
       fetch(`/api/generated-documents?projectId=${projectId}`),
     ]);
-    const [reqData, tcData, bugData, benchData, docData] = await Promise.all([
+    const [reqData, scnData, tcData, execData, bugData, benchData, docData] = await Promise.all([
       reqRes.json(),
+      scnRes.json(),
       tcRes.json(),
+      execRes.json(),
       bugRes.json(),
       benchRes.json(),
       docRes.json(),
     ]);
     setRequirements(reqData.requirements ?? []);
+    setTestScenarios(scnData.testScenarios ?? []);
     setTestCases(tcData.testCases ?? []);
+    setExecutions(execData.executions ?? []);
     setBugReports(bugData.bugReports ?? []);
     setBenchmarkRows(benchData.benchmarkRows ?? []);
     setGeneratedDocuments(docData.documents ?? []);
@@ -705,7 +746,9 @@ export default function Home() {
                   >
                     {tab.label}
                     {tab.id === "requirements" && requirements.length > 0 && ` (${requirements.length})`}
+                    {tab.id === "test_scenarios" && testScenarios.length > 0 && ` (${testScenarios.length})`}
                     {tab.id === "test_cases" && testCases.length > 0 && ` (${testCases.length})`}
+                    {tab.id === "executions" && executions.length > 0 && ` (${executions.length})`}
                     {tab.id === "bug_reports" && bugReports.length > 0 && ` (${bugReports.length})`}
                     {tab.id === "benchmark" && benchmarkRows.length > 0 && ` (${benchmarkRows.length})`}
                     {tab.id === "generated_documents" &&
@@ -721,8 +764,22 @@ export default function Home() {
                 {activeTab === "requirements" && (
                   <DataTable columns={REQUIREMENT_COLUMNS} rows={requirements} emptyLabel="No requirements saved yet." />
                 )}
+                {activeTab === "test_scenarios" && (
+                  <DataTable
+                    columns={TEST_SCENARIO_COLUMNS}
+                    rows={testScenarios}
+                    emptyLabel="No test scenarios saved yet."
+                  />
+                )}
                 {activeTab === "test_cases" && (
                   <DataTable columns={TEST_CASE_COLUMNS} rows={testCases} emptyLabel="No test cases saved yet." />
+                )}
+                {activeTab === "executions" && (
+                  <DataTable
+                    columns={EXECUTION_COLUMNS}
+                    rows={executions}
+                    emptyLabel="No tests have been executed yet."
+                  />
                 )}
                 {activeTab === "bug_reports" && (
                   <DataTable columns={BUG_COLUMNS} rows={bugReports} emptyLabel="No bugs logged yet." />

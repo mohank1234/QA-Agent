@@ -4,6 +4,21 @@ export type ColumnDef = {
   width?: string;
 };
 
+// A cell whose value is a list of {label, url} renders as links rather than
+// String()'d into "[object Object]" — used by the evidence/attachment columns,
+// where the whole point is being able to open the artifact.
+function asLinks(value: unknown): { label: string; url: string }[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const links = value.filter(
+    (v): v is { label: string; url: string } =>
+      typeof v === "object" &&
+      v !== null &&
+      typeof (v as { label?: unknown }).label === "string" &&
+      typeof (v as { url?: unknown }).url === "string"
+  );
+  return links.length === value.length ? links : null;
+}
+
 export function DataTable({
   columns,
   rows,
@@ -52,6 +67,7 @@ export function DataTable({
             <tr key={i} style={{ borderBottom: "1px solid var(--app-border)" }}>
               {columns.map((col) => {
                 const value = row[col.key];
+                const links = asLinks(value);
                 const display =
                   typeof value === "number" && col.key === "is_assumption"
                     ? value
@@ -70,7 +86,23 @@ export function DataTable({
                       maxWidth: 360,
                     }}
                   >
-                    {display}
+                    {links ? (
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {links.map((l) => (
+                          <a
+                            key={l.url}
+                            href={l.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: "var(--app-accent)", textDecoration: "underline" }}
+                          >
+                            {l.label}
+                          </a>
+                        ))}
+                      </span>
+                    ) : (
+                      display
+                    )}
                   </td>
                 );
               })}
