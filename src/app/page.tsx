@@ -73,7 +73,7 @@ const REQUIREMENT_COLUMNS: ColumnDef[] = [
 
 const TEST_SCENARIO_COLUMNS: ColumnDef[] = [
   { key: "scenario_id", label: "Scenario ID", width: "110px" },
-  { key: "scenario", label: "Scenario" },
+  { key: "scenario", label: "Scenario", width: "420px" },
   { key: "priority", label: "Priority", width: "80px" },
   { key: "source_requirement", label: "Requirement Mapping", width: "150px" },
 ];
@@ -86,14 +86,14 @@ const TEST_CASE_COLUMNS: ColumnDef[] = [
   { key: "test_type", label: "Test Type", width: "110px" },
   { key: "priority", label: "Priority", width: "80px" },
   { key: "severity", label: "Severity", width: "80px" },
-  { key: "preconditions", label: "Preconditions" },
-  { key: "test_data", label: "Test Data" },
-  { key: "steps", label: "Test Steps" },
-  { key: "expected_result", label: "Expected Result" },
-  { key: "actual_result", label: "Actual Result" },
+  { key: "preconditions", label: "Preconditions", width: "180px" },
+  { key: "test_data", label: "Test Data", width: "180px" },
+  { key: "steps", label: "Test Steps", width: "240px" },
+  { key: "expected_result", label: "Expected Result", width: "220px" },
+  { key: "actual_result", label: "Actual Result", width: "220px" },
   { key: "status", label: "Status", width: "90px" },
   { key: "last_executed_at", label: "Last Executed", width: "160px" },
-  { key: "comments", label: "Comments" },
+  { key: "comments", label: "Comments", width: "180px" },
 ];
 
 const EXECUTION_COLUMNS: ColumnDef[] = [
@@ -103,8 +103,8 @@ const EXECUTION_COLUMNS: ColumnDef[] = [
   { key: "run_label", label: "Run", width: "170px" },
   { key: "duration_ms", label: "Duration (ms)", width: "110px" },
   { key: "evidence", label: "Evidence", width: "230px" },
-  { key: "actual_result", label: "Actual Result" },
-  { key: "error_message", label: "Error" },
+  { key: "actual_result", label: "Actual Result", width: "230px" },
+  { key: "error_message", label: "Error", width: "260px" },
 ];
 
 const BUG_COLUMNS: ColumnDef[] = [
@@ -115,17 +115,17 @@ const BUG_COLUMNS: ColumnDef[] = [
   { key: "severity", label: "Severity", width: "80px" },
   { key: "priority", label: "Priority", width: "80px" },
   { key: "status", label: "Status", width: "100px" },
-  { key: "preconditions", label: "Preconditions" },
-  { key: "test_data", label: "Test Data" },
-  { key: "description", label: "Description" },
-  { key: "steps_to_reproduce", label: "Steps to Reproduce" },
-  { key: "actual_result", label: "Actual Result" },
-  { key: "expected_result", label: "Expected Result" },
-  { key: "frequency", label: "Frequency", width: "100px" },
-  { key: "root_cause_suggestion", label: "Root Cause Suggestion" },
-  { key: "source_test_case", label: "Source Test Case", width: "120px" },
+  { key: "preconditions", label: "Preconditions", width: "180px" },
+  { key: "test_data", label: "Test Data", width: "180px" },
+  { key: "description", label: "Description", width: "220px" },
+  { key: "steps_to_reproduce", label: "Steps to Reproduce", width: "240px" },
+  { key: "actual_result", label: "Actual Result", width: "220px" },
+  { key: "expected_result", label: "Expected Result", width: "220px" },
+  { key: "frequency", label: "Frequency", width: "110px" },
+  { key: "root_cause_suggestion", label: "Root Cause Suggestion", width: "200px" },
+  { key: "source_test_case", label: "Source Test Case", width: "130px" },
   { key: "attachments", label: "Attachments", width: "230px" },
-  { key: "comments", label: "Comments" },
+  { key: "comments", label: "Comments", width: "180px" },
 ];
 
 const BENCHMARK_COLUMNS: ColumnDef[] = [
@@ -142,18 +142,55 @@ const BENCHMARK_COLUMNS: ColumnDef[] = [
   { key: "pass_fail", label: "Pass / Fail", width: "90px" },
 ];
 
-const QUICK_ACTIONS: { label: string; message: string }[] = [
+// Counts shown as badges on each tab. Kept as a lookup so the tab row stays a
+// single loop instead of one conditional per tab inline.
+type TabData = {
+  requirements: unknown[];
+  testScenarios: unknown[];
+  testCases: unknown[];
+  executions: unknown[];
+  bugReports: unknown[];
+  benchmarkRows: unknown[];
+  generatedDocuments: unknown[];
+};
+
+const TAB_COUNTS: Partial<Record<Tab, (d: TabData) => number>> = {
+  requirements: (d) => d.requirements.length,
+  test_scenarios: (d) => d.testScenarios.length,
+  test_cases: (d) => d.testCases.length,
+  executions: (d) => d.executions.length,
+  bug_reports: (d) => d.bugReports.length,
+  benchmark: (d) => d.benchmarkRows.length,
+  generated_documents: (d) => d.generatedDocuments.length,
+};
+
+const SIDEBAR_LABEL: React.CSSProperties = {
+  fontSize: 10.5,
+  fontWeight: 700,
+  letterSpacing: "0.07em",
+  textTransform: "uppercase",
+  color: "var(--app-text-dim)",
+  marginBottom: 8,
+};
+
+const QUICK_ACTIONS: { label: string; icon: string; hint: string; message: string }[] = [
   {
     label: "Test Plan",
+    icon: "📋",
+    hint: "Scope, approach, risks, entry/exit criteria",
     message: "Generate a full Test Plan and Test Strategy for this project based on the uploaded documents.",
   },
   {
     label: "Test Cases",
+    icon: "🧪",
+    hint: "Scenarios, then detailed cases per requirement",
     message:
       "Analyze all uploaded documents, extract every requirement, and generate detailed test cases for each one.",
   },
   {
     label: "Benchmark Dataset",
+    icon: "🎯",
+    hint: "Q&A pairs grounded in your documents",
     message:
       "Build an AI/RAG benchmark dataset from the uploaded documents, covering positive, negative, and edge cases.",
   },
@@ -256,6 +293,12 @@ export default function Home() {
     messages.length === 0 &&
     !welcomeDismissed[selectedProjectId] &&
     activeTab === "chat";
+
+  // A brand-new project has no documents, so the quick-action welcome above
+  // doesn't apply — without this the chat pane is a blank void with no hint
+  // that uploading is the first step.
+  const showEmptyChat =
+    !!selectedProjectId && messages.length === 0 && !showWelcome && activeTab === "chat";
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -468,11 +511,33 @@ export default function Home() {
           overflowY: "auto",
         }}
       >
-        <div>
-          <h1 style={{ fontSize: 16, fontWeight: 600 }}>QA Intelligence Agent</h1>
-          <p style={{ fontSize: 12, color: "var(--app-text-dim)", marginTop: 4 }}>
-            Requirement analysis · test design · benchmark generation
-          </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              flexShrink: 0,
+              borderRadius: 9,
+              display: "grid",
+              placeItems: "center",
+              background: "linear-gradient(140deg, var(--app-accent), #8b5cf6)",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 700,
+              boxShadow: "var(--app-shadow-sm)",
+            }}
+            aria-hidden
+          >
+            QA
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ fontSize: 15, fontWeight: 650, letterSpacing: "-0.01em" }}>
+              QA Intelligence Agent
+            </h1>
+            <p style={{ fontSize: 11.5, color: "var(--app-text-dim)", marginTop: 2 }}>
+              Analyze · design · execute · report
+            </p>
+          </div>
         </div>
 
         <div
@@ -494,100 +559,99 @@ export default function Home() {
               </span>
               <button
                 onClick={() => signOut({ callbackUrl: "/login" })}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--app-text-dim)",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
+                className="app-btn app-btn-ghost"
+                style={{ padding: "4px 8px", fontSize: 12.5, flexShrink: 0 }}
               >
                 Sign out
               </button>
             </>
           ) : (
-            <Link href="/login" style={{ color: "var(--app-accent)" }}>
+            <Link href="/login" className="app-btn app-btn-primary" style={{ width: "100%" }}>
               Sign in
             </Link>
           )}
         </div>
 
         <div>
-          <div style={{ fontSize: 12, color: "var(--app-text-dim)", marginBottom: 6 }}>PROJECTS</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {projects.map((p) => (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                <button
-                  onClick={() => {
-                    setSelectedProjectId(p.id);
-                    setActiveTab("chat");
-                  }}
+          <div style={SIDEBAR_LABEL}>Projects</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {projects.length === 0 && (
+              <span style={{ fontSize: 13, color: "var(--app-text-dim)" }}>
+                No projects yet — create one below.
+              </span>
+            )}
+            {projects.map((p) => {
+              const active = p.id === selectedProjectId;
+              return (
+                <div
+                  key={p.id}
+                  className="app-nav-item"
+                  data-active={active}
                   style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "none",
-                    cursor: "pointer",
-                    background: p.id === selectedProjectId ? "var(--app-accent)" : "transparent",
-                    color: p.id === selectedProjectId ? "var(--app-accent-text)" : "var(--app-text)",
-                    fontSize: 14,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    background: active ? "var(--app-accent)" : "transparent",
                   }}
                 >
-                  {p.name}
-                </button>
-                <button
-                  onClick={() => handleDeleteProject(p)}
-                  title={`Delete "${p.name}"`}
-                  style={{
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--app-text-dim)",
-                    cursor: "pointer",
-                    fontSize: 15,
-                    lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+                  <button
+                    onClick={() => {
+                      setSelectedProjectId(p.id);
+                      setActiveTab("chat");
+                    }}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: "left",
+                      padding: "8px 10px",
+                      borderRadius: "var(--app-radius)",
+                      border: "none",
+                      cursor: "pointer",
+                      background: "transparent",
+                      color: active ? "var(--app-accent-text)" : "var(--app-text)",
+                      fontSize: 13.5,
+                      fontWeight: active ? 600 : 450,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.name}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteProject(p)}
+                    title={`Delete "${p.name}"`}
+                    aria-label={`Delete project ${p.name}`}
+                    className="app-btn app-btn-ghost app-btn-danger"
+                    style={{
+                      padding: "4px 7px",
+                      marginRight: 4,
+                      fontSize: 15,
+                      lineHeight: 1,
+                      color: active ? "var(--app-accent-text)" : "var(--app-text-dim)",
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
           </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
             <input
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
               placeholder="New project name"
-              style={{
-                flex: 1,
-                padding: "6px 8px",
-                borderRadius: 6,
-                border: "1px solid var(--app-border)",
-                background: "var(--app-bg)",
-                color: "var(--app-text)",
-                fontSize: 13,
-              }}
+              className="app-input"
+              style={{ flex: 1, minWidth: 0, padding: "7px 10px", fontSize: 13 }}
             />
             <button
               onClick={handleCreateProject}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "none",
-                background: "var(--app-accent)",
-                color: "var(--app-accent-text)",
-                cursor: "pointer",
-                fontSize: 13,
-              }}
+              className="app-btn app-btn-primary"
+              title="Create project"
+              aria-label="Create project"
+              style={{ padding: "7px 12px", fontSize: 15, lineHeight: 1 }}
             >
               +
             </button>
@@ -596,15 +660,17 @@ export default function Home() {
 
         {selectedProjectId && (
           <div>
-            <div style={{ fontSize: 12, color: "var(--app-text-dim)", marginBottom: 6 }}>
-              DOCUMENTS
-            </div>
+            <div style={SIDEBAR_LABEL}>Documents</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
               {documents.length === 0 && (
                 <span style={{ color: "var(--app-text-dim)" }}>None yet</span>
               )}
               {documents.map((d) => (
-                <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div
+                  key={d.id}
+                  className="app-nav-item"
+                  style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 2px" }}
+                >
                   <button
                     onClick={() => openPreview(d.filename)}
                     title={`Uploaded ${d.uploaded_at} — click to preview`}
@@ -612,30 +678,35 @@ export default function Home() {
                       flex: 1,
                       minWidth: 0,
                       textAlign: "left",
-                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      padding: "5px 6px",
                       border: "none",
                       background: "transparent",
                       color: "var(--app-text)",
                       cursor: "pointer",
                       fontSize: 13,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
-                    onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
                   >
-                    {d.filename}
+                    <span style={{ opacity: 0.65, flexShrink: 0 }} aria-hidden>
+                      ▤
+                    </span>
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {d.filename}
+                    </span>
                   </button>
                   <a
                     href={`/api/documents/${selectedProjectId}/${encodeURIComponent(d.filename)}`}
-                    title="Download"
-                    style={{
-                      color: "var(--app-text-dim)",
-                      textDecoration: "none",
-                      fontSize: 13,
-                      padding: "0 2px",
-                    }}
+                    title={`Download ${d.filename}`}
+                    className="app-btn app-btn-ghost"
+                    style={{ padding: "3px 6px", fontSize: 12 }}
                   >
                     ⬇
                   </a>
@@ -657,19 +728,10 @@ export default function Home() {
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              style={{
-                marginTop: 8,
-                width: "100%",
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--app-border)",
-                background: "transparent",
-                color: "var(--app-text)",
-                cursor: "pointer",
-                fontSize: 13,
-              }}
+              className="app-btn"
+              style={{ marginTop: 10, width: "100%", borderStyle: "dashed" }}
             >
-              {uploading ? "Uploading…" : "+ Upload document(s)"}
+              {uploading ? "Uploading…" : "⬆  Upload document(s)"}
             </button>
           </div>
         )}
@@ -702,13 +764,53 @@ export default function Home() {
           </div>
         )}
         {!selectedProject ? (
-          <div style={{ margin: "auto", textAlign: "center", color: "var(--app-text-dim)" }}>
-            <div>Create or select a project to start.</div>
+          <div
+            style={{
+              margin: "auto",
+              textAlign: "center",
+              color: "var(--app-text-dim)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 12,
+              padding: 24,
+            }}
+          >
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 16,
+                display: "grid",
+                placeItems: "center",
+                background: "var(--app-accent-soft)",
+                color: "var(--app-accent)",
+                fontSize: 24,
+              }}
+              aria-hidden
+            >
+              ◈
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 650, color: "var(--app-text)" }}>
+              Create or select a project to start
+            </div>
+            <div style={{ fontSize: 13.5, maxWidth: 380, lineHeight: 1.55 }}>
+              Each project is its own workspace — documents, requirements, test cases, runs and
+              reports stay together.
+            </div>
             {sessionStatus !== "loading" && !session?.user && (
-              <div style={{ fontSize: 12, marginTop: 8, maxWidth: 360 }}>
-                Not signed in — anything you create will be permanently deleted 1 hour after
-                creation.{" "}
-                <Link href="/signup" style={{ color: "var(--app-accent)" }}>
+              <div
+                className="app-card"
+                style={{
+                  fontSize: 12.5,
+                  marginTop: 4,
+                  maxWidth: 380,
+                  padding: "10px 14px",
+                  lineHeight: 1.5,
+                }}
+              >
+                Not signed in — anything you create is permanently deleted 1 hour after creation.{" "}
+                <Link href="/signup" className="app-link">
                   Sign up
                 </Link>{" "}
                 first to keep your work.
@@ -725,37 +827,63 @@ export default function Home() {
                 borderBottom: "1px solid var(--app-border)",
               }}
             >
-              <div style={{ padding: "12px 20px", fontSize: 14, fontWeight: 600 }}>
+              <div
+                style={{
+                  padding: "12px 20px",
+                  fontSize: 14.5,
+                  fontWeight: 650,
+                  letterSpacing: "-0.01em",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {selectedProject.name}
               </div>
-              <div style={{ display: "flex", gap: 2, paddingRight: 12 }}>
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    style={{
-                      padding: "10px 14px",
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: activeTab === tab.id ? 600 : 400,
-                      color: activeTab === tab.id ? "var(--app-accent)" : "var(--app-text-dim)",
-                      borderBottom: activeTab === tab.id ? "2px solid var(--app-accent)" : "2px solid transparent",
-                    }}
-                  >
-                    {tab.label}
-                    {tab.id === "requirements" && requirements.length > 0 && ` (${requirements.length})`}
-                    {tab.id === "test_scenarios" && testScenarios.length > 0 && ` (${testScenarios.length})`}
-                    {tab.id === "test_cases" && testCases.length > 0 && ` (${testCases.length})`}
-                    {tab.id === "executions" && executions.length > 0 && ` (${executions.length})`}
-                    {tab.id === "bug_reports" && bugReports.length > 0 && ` (${bugReports.length})`}
-                    {tab.id === "benchmark" && benchmarkRows.length > 0 && ` (${benchmarkRows.length})`}
-                    {tab.id === "generated_documents" &&
-                      generatedDocuments.length > 0 &&
-                      ` (${generatedDocuments.length})`}
-                  </button>
-                ))}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 2,
+                  paddingRight: 12,
+                  overflowX: "auto",
+                  scrollbarWidth: "none",
+                }}
+              >
+                {TABS.map((tab) => {
+                  const active = activeTab === tab.id;
+                  const count = TAB_COUNTS[tab.id]?.({
+                    requirements,
+                    testScenarios,
+                    testCases,
+                    executions,
+                    bugReports,
+                    benchmarkRows,
+                    generatedDocuments,
+                  });
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className="app-tab"
+                      data-active={active}
+                      aria-current={active ? "page" : undefined}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "11px 13px",
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: active ? 650 : 450,
+                        color: active ? "var(--app-accent)" : "var(--app-text-dim)",
+                        borderBottom: `2px solid ${active ? "var(--app-accent)" : "transparent"}`,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {tab.label}
+                      {count ? <span className="app-count">{count}</span> : null}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -812,41 +940,119 @@ export default function Home() {
                         paddingTop: 60,
                       }}
                     >
-                      <div style={{ fontSize: 15, fontWeight: 600 }}>
-                        {documents.length} document{documents.length === 1 ? "" : "s"} uploaded — what would you like to generate?
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: "-0.01em" }}>
+                          {documents.length} document{documents.length === 1 ? "" : "s"} ready
+                        </div>
+                        <div style={{ fontSize: 13.5, color: "var(--app-text-dim)", marginTop: 6 }}>
+                          Pick a starting point, or just describe what you need.
+                        </div>
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                      <div style={{ display: "grid", gap: 10 }}>
                         {QUICK_ACTIONS.map((action) => (
                           <button
                             key={action.label}
                             onClick={() => sendMessage(action.message)}
+                            className="app-card app-card-interactive"
                             style={{
-                              padding: "10px 16px",
-                              borderRadius: 8,
-                              border: "1px solid var(--app-border)",
-                              background: "var(--app-panel)",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                              padding: "13px 15px",
+                              textAlign: "left",
                               color: "var(--app-text)",
-                              cursor: "pointer",
-                              fontSize: 14,
+                              font: "inherit",
                             }}
                           >
-                            {action.label}
+                            <span style={{ fontSize: 20, lineHeight: 1 }} aria-hidden>
+                              {action.icon}
+                            </span>
+                            <span style={{ minWidth: 0 }}>
+                              <span
+                                style={{ display: "block", fontSize: 14, fontWeight: 600 }}
+                              >
+                                {action.label}
+                              </span>
+                              <span
+                                style={{
+                                  display: "block",
+                                  fontSize: 12.5,
+                                  color: "var(--app-text-dim)",
+                                  marginTop: 2,
+                                }}
+                              >
+                                {action.hint}
+                              </span>
+                            </span>
+                            <span
+                              style={{ marginLeft: "auto", color: "var(--app-text-dim)" }}
+                              aria-hidden
+                            >
+                              →
+                            </span>
                           </button>
                         ))}
                         <button
                           onClick={() => selectedProjectId && setWelcomeDismissed((w) => ({ ...w, [selectedProjectId]: true }))}
-                          style={{
-                            padding: "10px 16px",
-                            borderRadius: 8,
-                            border: "1px dashed var(--app-border)",
-                            background: "transparent",
-                            color: "var(--app-text-dim)",
-                            cursor: "pointer",
-                            fontSize: 14,
-                          }}
+                          className="app-btn app-btn-ghost"
+                          style={{ justifySelf: "center", marginTop: 2 }}
                         >
                           Something else…
                         </button>
+                      </div>
+                    </div>
+                  ) : showEmptyChat ? (
+                    <div
+                      style={{
+                        maxWidth: 460,
+                        margin: "0 auto",
+                        paddingTop: 72,
+                        textAlign: "center",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 56,
+                          height: 56,
+                          borderRadius: 16,
+                          display: "grid",
+                          placeItems: "center",
+                          background: "var(--app-accent-soft)",
+                          color: "var(--app-accent)",
+                          fontSize: 24,
+                        }}
+                        aria-hidden
+                      >
+                        ⬆
+                      </div>
+                      <div style={{ fontSize: 17, fontWeight: 650 }}>
+                        Start by uploading a document
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 13.5,
+                          color: "var(--app-text-dim)",
+                          lineHeight: 1.55,
+                        }}
+                      >
+                        Drop in a BRD, PRD, spec or API doc and the agent will read it, extract
+                        requirements, and design tests from it. You can also just type a question
+                        below.
+                      </div>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        className="app-btn app-btn-primary"
+                        style={{ padding: "10px 18px", fontSize: 14 }}
+                      >
+                        {uploading ? "Uploading…" : "Upload document(s)"}
+                      </button>
+                      <div style={{ fontSize: 12, color: "var(--app-text-dim)" }}>
+                        PDF · DOCX · XLSX · CSV · PPTX · TXT · MD
                       </div>
                     </div>
                   ) : (
@@ -855,7 +1061,23 @@ export default function Home() {
                         <ChatBubble key={i} message={m} onPreviewDocument={openChatDocumentPreview} />
                       ))}
                       {sending && (
-                        <div style={{ color: "var(--app-text-dim)", fontSize: 13, padding: "4px 0" }}>
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            color: "var(--app-text-dim)",
+                            fontSize: 13,
+                            padding: "8px 12px",
+                            borderRadius: 999,
+                            background: "var(--app-bubble-assistant)",
+                          }}
+                        >
+                          <span className="app-dots" aria-hidden>
+                            <i />
+                            <i />
+                            <i />
+                          </span>
                           Thinking…
                         </div>
                       )}
@@ -871,9 +1093,11 @@ export default function Home() {
                 <div
                   style={{
                     display: "flex",
+                    alignItems: "flex-end",
                     gap: 8,
                     padding: 16,
                     borderTop: "1px solid var(--app-border)",
+                    background: "var(--app-panel)",
                   }}
                 >
                   <textarea
@@ -889,36 +1113,27 @@ export default function Home() {
                     placeholder={
                       chatDisabled
                         ? "Chat is disabled on this hosted site — run the project locally to chat."
-                        : "Ask it to analyze a document, generate test cases, build a benchmark dataset…"
+                        : "Ask it to analyze a document, generate test cases, or run a test…"
                     }
                     rows={2}
+                    className="app-input"
                     style={{
                       flex: 1,
                       resize: "none",
-                      padding: 10,
-                      borderRadius: 8,
-                      border: "1px solid var(--app-border)",
-                      background: "var(--app-panel)",
-                      color: "var(--app-text)",
+                      padding: "10px 12px",
                       fontSize: 14,
+                      lineHeight: 1.45,
                       opacity: chatDisabled ? 0.6 : 1,
                     }}
                   />
                   <button
                     onClick={() => sendMessage(chatInput.trim())}
                     disabled={sending || !chatInput.trim() || chatDisabled}
-                    style={{
-                      padding: "0 20px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: "var(--app-accent)",
-                      color: "var(--app-accent-text)",
-                      cursor: sending || chatDisabled ? "default" : "pointer",
-                      opacity: sending || !chatInput.trim() || chatDisabled ? 0.6 : 1,
-                      fontSize: 14,
-                    }}
+                    className="app-btn app-btn-primary"
+                    title="Send  (Enter)"
+                    style={{ padding: "0 20px", height: 44, fontSize: 14 }}
                   >
-                    Send
+                    {sending ? "Sending…" : "Send"}
                   </button>
                 </div>
               </>
@@ -1211,14 +1426,19 @@ function ChatBubble({
     >
       <div
         style={{
-          maxWidth: "70%",
-          padding: "10px 14px",
-          borderRadius: 12,
+          // Capped in ch as well as %: on a wide monitor 70% is ~1100px, which
+          // is far past the ~75-character line length prose stays readable at.
+          maxWidth: "min(70%, 78ch)",
+          padding: "11px 15px",
+          // Asymmetric corner on the speaker's side — the usual visual cue for
+          // who said what, so the two sides don't read as identical blocks.
+          borderRadius: isUser ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
           whiteSpace: "pre-wrap",
           fontSize: 14,
-          lineHeight: 1.5,
+          lineHeight: 1.55,
           background: isUser ? "var(--app-bubble-user)" : "var(--app-bubble-assistant)",
           color: isUser ? "var(--app-bubble-user-text)" : "var(--app-bubble-assistant-text)",
+          boxShadow: "var(--app-shadow-sm)",
         }}
       >
         {message.content}

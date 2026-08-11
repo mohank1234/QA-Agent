@@ -14,34 +14,83 @@
    @theme inline. Two independent theme systems, on purpose, until the
    legacy UI is deliberately migrated (see Phase 2 Step 1 in project notes). */
 :root {
-  --app-bg: #f7f7f8;
+  --app-bg: #f4f4f7;
   --app-panel: #ffffff;
-  --app-border: #e2e2e6;
-  --app-text: #1a1a1e;
-  --app-text-dim: #6b6b73;
+  /* A second surface for things that sit *on* a panel (rows, wells, inputs) —
+     without it, nested white-on-white areas have no edge except a border. */
+  --app-surface: #fafafb;
+  --app-border: #e4e4ea;
+  --app-border-strong: #d0d0d9;
+  --app-text: #17171c;
+  --app-text-dim: #6b6b78;
   --app-accent: #4f46e5;
+  --app-accent-hover: #4338ca;
+  --app-accent-soft: rgba(79, 70, 229, 0.09);
   --app-accent-text: #ffffff;
   --app-bubble-user: #4f46e5;
   --app-bubble-user-text: #ffffff;
-  --app-bubble-assistant: #f0f0f3;
-  --app-bubble-assistant-text: #1a1a1e;
+  --app-bubble-assistant: #f0f0f4;
+  --app-bubble-assistant-text: #17171c;
   --app-danger: #dc2626;
+  --app-danger-soft: rgba(220, 38, 38, 0.1);
+
+  /* Status colours. QA output is mostly pass/fail/severity, so these carry
+     most of the meaning in the tables — text and background are paired so
+     contrast holds in both themes. */
+  --app-pass: #047857;
+  --app-pass-bg: rgba(5, 150, 105, 0.12);
+  --app-fail: #b91c1c;
+  --app-fail-bg: rgba(220, 38, 38, 0.11);
+  --app-warn: #b45309;
+  --app-warn-bg: rgba(217, 119, 6, 0.13);
+  --app-info: #1d4ed8;
+  --app-info-bg: rgba(37, 99, 235, 0.11);
+  --app-neutral: #52525b;
+  --app-neutral-bg: rgba(82, 82, 91, 0.1);
+
+  --app-radius: 8px;
+  --app-radius-lg: 12px;
+  --app-shadow-sm: 0 1px 2px rgba(16, 16, 24, 0.06);
+  --app-shadow: 0 2px 8px rgba(16, 16, 24, 0.08);
+  --app-shadow-lg: 0 12px 32px rgba(16, 16, 24, 0.14);
+  --app-ring: 0 0 0 3px rgba(79, 70, 229, 0.32);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --app-bg: #16161a;
-    --app-panel: #1e1e23;
-    --app-border: #303038;
-    --app-text: #f0f0f2;
-    --app-text-dim: #9a9aa2;
-    --app-accent: #6366f1;
+    --app-bg: #121216;
+    --app-panel: #1b1b21;
+    --app-surface: #212128;
+    --app-border: #2e2e37;
+    --app-border-strong: #3d3d48;
+    --app-text: #f2f2f5;
+    --app-text-dim: #9b9baa;
+    --app-accent: #6d6af5;
+    --app-accent-hover: #7f7cf7;
+    --app-accent-soft: rgba(109, 106, 245, 0.18);
     --app-accent-text: #ffffff;
-    --app-bubble-user: #6366f1;
+    --app-bubble-user: #5b58e8;
     --app-bubble-user-text: #ffffff;
-    --app-bubble-assistant: #2a2a31;
-    --app-bubble-assistant-text: #f0f0f2;
+    --app-bubble-assistant: #262630;
+    --app-bubble-assistant-text: #f2f2f5;
     --app-danger: #f87171;
+    --app-danger-soft: rgba(248, 113, 113, 0.14);
+
+    --app-pass: #4ade80;
+    --app-pass-bg: rgba(74, 222, 128, 0.14);
+    --app-fail: #f87171;
+    --app-fail-bg: rgba(248, 113, 113, 0.15);
+    --app-warn: #fbbf24;
+    --app-warn-bg: rgba(251, 191, 36, 0.15);
+    --app-info: #7dabff;
+    --app-info-bg: rgba(125, 171, 255, 0.15);
+    --app-neutral: #a1a1aa;
+    --app-neutral-bg: rgba(161, 161, 170, 0.14);
+
+    --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --app-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    --app-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --app-ring: 0 0 0 3px rgba(109, 106, 245, 0.45);
   }
 
   html {
@@ -73,6 +122,275 @@ button {
 textarea,
 input {
   font-family: inherit;
+}
+
+/* --- Interaction layer -------------------------------------------------
+   The UI is styled inline in page.tsx, so these classes exist to carry the
+   things inline styles cannot express at all: :hover, :active,
+   :focus-visible, and transitions. That is also what makes controls read as
+   clickable — a button with no hover or press state looks like a label. */
+
+:where(button, a, [role="button"]):not(:disabled) {
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.08s ease;
+}
+
+/* Keyboard focus only — a visible ring on every mouse click is noise, but
+   removing it entirely strands keyboard users. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--app-ring);
+  border-radius: var(--app-radius);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Buttons ---------------------------------------------------------------- */
+
+.app-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--app-radius);
+  border: 1px solid var(--app-border);
+  background: var(--app-panel);
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--app-shadow-sm);
+}
+.app-btn:hover:not(:disabled) {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface);
+}
+/* Press feedback: the control moves under the cursor, which is the cheapest
+   possible confirmation that the click registered. */
+.app-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.app-btn-primary {
+  background: var(--app-accent);
+  border-color: transparent;
+  color: var(--app-accent-text);
+  box-shadow: var(--app-shadow-sm);
+}
+.app-btn-primary:hover:not(:disabled) {
+  background: var(--app-accent-hover);
+  border-color: transparent;
+}
+
+.app-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--app-text-dim);
+}
+.app-btn-ghost:hover:not(:disabled) {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  border-color: transparent;
+}
+
+.app-btn-danger:hover:not(:disabled) {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  border-color: transparent;
+}
+
+/* Sidebar items ---------------------------------------------------------- */
+
+.app-nav-item {
+  cursor: pointer;
+  border-radius: var(--app-radius);
+}
+.app-nav-item:hover {
+  background: var(--app-accent-soft);
+}
+.app-nav-item[data-active="true"]:hover {
+  background: var(--app-accent);
+}
+
+/* Tabs ------------------------------------------------------------------- */
+
+.app-tab {
+  position: relative;
+  cursor: pointer;
+  border-radius: var(--app-radius) var(--app-radius) 0 0;
+}
+.app-tab:hover {
+  background: var(--app-accent-soft);
+  color: var(--app-text);
+}
+
+/* Count badge next to a tab label. Reads as "there is data here" at a
+   glance, which the previous "(12)" in the label did not. */
+.app-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 9px;
+  background: var(--app-neutral-bg);
+  color: var(--app-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+.app-tab[data-active="true"] .app-count {
+  background: var(--app-accent);
+  color: var(--app-accent-text);
+}
+
+/* Status pills ----------------------------------------------------------- */
+
+.app-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: var(--app-neutral-bg);
+  color: var(--app-neutral);
+}
+.app-pill-pass { background: var(--app-pass-bg); color: var(--app-pass); }
+.app-pill-fail { background: var(--app-fail-bg); color: var(--app-fail); }
+.app-pill-warn { background: var(--app-warn-bg); color: var(--app-warn); }
+.app-pill-info { background: var(--app-info-bg); color: var(--app-info); }
+
+/* Cards ------------------------------------------------------------------ */
+
+.app-card {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-panel);
+  box-shadow: var(--app-shadow-sm);
+}
+/* Only for cards that actually do something when clicked. */
+.app-card-interactive {
+  cursor: pointer;
+}
+.app-card-interactive:hover {
+  border-color: var(--app-accent);
+  box-shadow: var(--app-shadow);
+  transform: translateY(-1px);
+}
+.app-card-interactive:active {
+  transform: translateY(0);
+  box-shadow: var(--app-shadow-sm);
+}
+
+/* Inputs ----------------------------------------------------------------- */
+
+.app-input {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--app-surface);
+  color: var(--app-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.app-input:hover:not(:disabled) {
+  border-color: var(--app-border-strong);
+}
+.app-input:focus {
+  outline: none;
+  border-color: var(--app-accent);
+  box-shadow: var(--app-ring);
+}
+
+/* Tables ----------------------------------------------------------------- */
+
+.app-table-row {
+  transition: background-color 0.12s ease;
+}
+.app-table-row:nth-child(even) {
+  background: var(--app-surface);
+}
+.app-table-row:hover {
+  background: var(--app-accent-soft);
+}
+
+.app-link {
+  color: var(--app-accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+.app-link:hover {
+  text-decoration: underline;
+}
+
+/* Scrollbars — the default Windows scrollbar is heavy enough to visually
+   dominate a dense table. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--app-border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-dim);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Typing indicator — motion is the difference between "the app is working"
+   and "the app is stuck". */
+.app-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.app-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  animation: app-dot 1.2s infinite ease-in-out;
+}
+.app-dots i:nth-child(2) { animation-delay: 0.15s; }
+.app-dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes app-dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 /* --- shadcn/ui theme below — untouched from its generator output, reserved
