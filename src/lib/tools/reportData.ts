@@ -16,7 +16,15 @@ export type ReportKind =
   | "daily_status"
   | "regression";
 
-function pct(numerator: number, denominator: number): number | null {
+/**
+ * Percentage, or null when there is nothing to take a percentage OF.
+ *
+ * The null matters more than the number. If this returned 0 for an empty
+ * denominator, a report would render "0% pass rate" for a project where no
+ * test has ever run — indistinguishable from a project where everything ran
+ * and failed. Null forces the caller to say "no data" instead.
+ */
+export function pct(numerator: number, denominator: number): number | null {
   return denominator === 0 ? null : Math.round((numerator / denominator) * 1000) / 10;
 }
 

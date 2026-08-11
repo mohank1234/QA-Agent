@@ -123,6 +123,48 @@ export async function draftBugFromExecution(
   };
 }
 
+export type FixVerdict = {
+  verdict: string;
+  proposedBugStatus: string | null;
+  flaky: boolean;
+};
+
+/**
+ * The verdict rules, kept pure and separate from the run itself so they can be
+ * asserted directly. The invariant that matters: a "fixed" verdict requires a
+ * prior recorded FAILURE, so a test that has only ever passed can never be
+ * presented as evidence that something was repaired.
+ */
+export function judgeFixVerdict(
+  nowPassing: boolean,
+  priorFailures: number,
+  priorPasses: number
+): FixVerdict {
+  const hadFailed = priorFailures > 0;
+  // Both outcomes in history means flaky, and one green re-run is then not
+  // proof of anything.
+  const flaky = priorFailures > 0 && priorPasses > 0;
+
+  if (nowPassing && hadFailed) {
+    return { verdict: "fixed", proposedBugStatus: "Ready for UAT", flaky };
+  }
+  if (nowPassing && !hadFailed) {
+    return {
+      verdict: "still passing (this case has no recorded failure, so nothing was verified as fixed)",
+      proposedBugStatus: null,
+      flaky,
+    };
+  }
+  if (!nowPassing && hadFailed) {
+    return { verdict: "still failing", proposedBugStatus: "In Progress", flaky };
+  }
+  return {
+    verdict: "newly failing (this case passed every previous run)",
+    proposedBugStatus: "Open",
+    flaky,
+  };
+}
+
 export type VerifyFixResult =
   | { ok: false; error: string }
   | { ok: true; background: true; runId: string; maxTimeoutMs: number; message: string }
@@ -191,26 +233,11 @@ export async function verifyFix(
   const suite = await executeAndPersist(projectId, tests, { label, triggeredBy: "agent" });
 
   const nowPassing = suite.failedCount === 0;
-  const hadFailed = priorFailures > 0;
-
-  // Every verdict is phrased in terms of what history actually shows, so a
-  // "fixed" claim cannot come from a test that never failed in the first place.
-  let verdict: string;
-  let proposedBugStatus: string | null = null;
-  if (nowPassing && hadFailed) {
-    verdict = "fixed";
-    proposedBugStatus = "Ready for UAT";
-  } else if (nowPassing && !hadFailed) {
-    verdict = "still passing (this case has no recorded failure, so nothing was verified as fixed)";
-  } else if (!nowPassing && hadFailed) {
-    verdict = "still failing";
-    proposedBugStatus = "In Progress";
-  } else {
-    verdict = "newly failing (this case passed every previous run)";
-    proposedBugStatus = "Open";
-  }
-
-  const flaky = priorFailures > 0 && priorPasses > 0;
+  const { verdict, proposedBugStatus, flaky } = judgeFixVerdict(
+    nowPassing,
+    priorFailures,
+    priorPasses
+  );
 
   return {
     ok: true,
