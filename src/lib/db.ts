@@ -125,13 +125,40 @@ export async function claimGuestProjects(guestId: string, userId: string): Promi
   });
 }
 
+// Projects past their guest expiry AND safe to delete. A background test run
+// can legitimately last up to 45 minutes, which fits inside the 1-hour guest
+// TTL — so a run started late in the hour would otherwise have its project
+// (and therefore its TestRun rows) deleted while executions were still being
+// written into it, failing the run's inserts on the foreign key. Skipping
+// projects with a run still in flight defers the delete to a later sweep,
+// which is the safe direction: the project outlives its TTL by minutes rather
+// than a run dying halfway through.
+//
+// Runs stuck at "running" because the server died would block deletion
+// forever, so anything older than the stale cutoff no longer counts as
+// in-flight — the same cutoff getTestRunStatus uses to report a run as
+// abandoned.
 export async function listExpiredGuestProjectIds(): Promise<string[]> {
   const now = new Date().toISOString();
-  const rows = await prisma.project.findMany({
+  const expired = await prisma.project.findMany({
     where: { expiresAt: { not: null, lte: now } },
     select: { id: true },
   });
-  return rows.map((r) => r.id);
+  if (expired.length === 0) return [];
+
+  const staleBefore = new Date(Date.now() - STALE_RUN_AFTER_MS).toISOString();
+  const busy = await prisma.testRun.findMany({
+    where: {
+      projectId: { in: expired.map((p) => p.id) },
+      status: "running",
+      startedAt: { gt: staleBefore },
+    },
+    select: { projectId: true },
+    distinct: ["projectId"],
+  });
+  const busyIds = new Set(busy.map((r) => r.projectId));
+
+  return expired.map((p) => p.id).filter((id) => !busyIds.has(id));
 }
 
 export async function setProjectSessionId(projectId: string, sessionId: string): Promise<void> {
