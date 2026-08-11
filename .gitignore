@@ -48,3 +48,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Local editor preferences (not project config)
+.vscode/
