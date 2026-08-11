@@ -14,20 +14,20 @@ datasource db {
 // randomUUID(). See docs/BUILD_JOURNAL.md for the SQLite-era history.
 
 model Project {
-  id        String  @id @default(uuid())
+  id        String   @id @default(uuid())
   name      String
-  sessionId String? @map("session_id")
-  createdAt String  @map("created_at")
-  ownerId   String? @map("owner_id")
-  createdBy String? @map("created_by")
-  updatedBy String? @map("updated_by")
+  sessionId String?  @map("session_id")
+  createdAt DateTime @map("created_at")
+  ownerId   String?  @map("owner_id")
+  createdBy String?  @map("created_by")
+  updatedBy String?  @map("updated_by")
   // Anonymous (not-signed-in) usage: set instead of ownerId, cleared and
   // replaced by ownerId if the guest signs up/in before expiry (see
   // claimGuestProjects in db.ts). expiresAt is fixed at creation time (now +
   // 1h) and never extended — a background sweep (src/lib/projectCleanup.ts)
   // deletes anything past it, regardless of how active the guest is.
-  guestId   String? @map("guest_id")
-  expiresAt String? @map("expires_at")
+  guestId   String?   @map("guest_id")
+  expiresAt DateTime? @map("expires_at")
 
   @@index([ownerId], map: "idx_projects_owner")
   @@index([guestId], map: "idx_projects_guest")
@@ -35,114 +35,254 @@ model Project {
 }
 
 model Document {
-  id         String @id @default(uuid())
-  projectId  String @map("project_id")
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
   filename   String
-  filePath   String @map("file_path")
-  uploadedAt String @map("uploaded_at")
+  filePath   String   @map("file_path")
+  uploadedAt DateTime @map("uploaded_at")
 
   @@index([projectId], map: "idx_documents_project")
   @@map("documents")
 }
 
 model Requirement {
-  id             String  @id @default(uuid())
-  projectId      String  @map("project_id")
-  reqId          String  @map("req_id")
-  reqType        String? @map("req_type")
+  id             String   @id @default(uuid())
+  projectId      String   @map("project_id")
+  reqId          String   @map("req_id")
+  reqType        String?  @map("req_type")
   description    String
-  isAssumption   Int     @default(0) @map("is_assumption")
-  sourceDocument String? @map("source_document")
-  createdAt      String  @map("created_at")
+  isAssumption   Int      @default(0) @map("is_assumption")
+  sourceDocument String?  @map("source_document")
+  createdAt      DateTime @map("created_at")
 
   @@index([projectId], map: "idx_requirements_project")
   @@map("requirements")
 }
 
 model TestCase {
-  id                String  @id @default(uuid())
-  projectId         String  @map("project_id")
-  caseId            String  @map("case_id")
-  requirementRef    String? @map("requirement_ref")
+  id                String   @id @default(uuid())
+  projectId         String   @map("project_id")
+  caseId            String   @map("case_id")
+  requirementRef    String?  @map("requirement_ref")
+  // Loose ref to TestScenario.scenarioId — the Test Plan → Scenarios → Test
+  // Cases layer the artifact format calls for. Same string-ref convention as
+  // sourceRequirement → Requirement.reqId, not an FK.
+  scenarioRef       String?  @map("scenario_ref")
   module            String?
-  testType          String? @map("test_type")
+  testType          String?  @map("test_type")
   priority          String?
   severity          String?
   preconditions     String?
   steps             String?
-  expectedResult    String? @map("expected_result")
-  testData          String? @map("test_data")
-  sourceRequirement String? @map("source_requirement")
-  createdAt         String  @map("created_at")
+  expectedResult    String?  @map("expected_result")
+  testData          String?  @map("test_data")
+  sourceRequirement String?  @map("source_requirement")
+  createdAt         DateTime @map("created_at")
+
+  // Execution output — written by the execution engine, never by the
+  // generation path. Null status means "not run yet", which is what every
+  // existing row is and stays until something actually executes it.
+  actualResult   String?   @map("actual_result")
+  status         String? // Pass | Fail | Blocked | null = not run
+  comments       String?
+  lastExecutedAt DateTime? @map("last_executed_at")
 
   @@index([projectId], map: "idx_test_cases_project")
   @@map("test_cases")
 }
 
 model BenchmarkRow {
-  id               String  @id @default(uuid())
-  projectId        String  @map("project_id")
-  sNo              Int?    @map("s_no")
-  agent            String?
-  question         String
-  queryCategory    String? @map("query_category")
-  scenarioType     String? @map("scenario_type")
-  expectedAnswer   String? @map("expected_answer")
-  answerInTesting  String? @map("answer_in_testing")
-  score            Float?
-  sourceDocument   String? @map("source_document")
-  notes            String?
-  passFail         String? @map("pass_fail")
-  createdAt        String  @map("created_at")
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  sNo             Int?     @map("s_no")
+  agent           String?
+  question        String
+  queryCategory   String?  @map("query_category")
+  scenarioType    String?  @map("scenario_type")
+  expectedAnswer  String?  @map("expected_answer")
+  answerInTesting String?  @map("answer_in_testing")
+  score           Float?
+  sourceDocument  String?  @map("source_document")
+  notes           String?
+  passFail        String?  @map("pass_fail")
+  createdAt       DateTime @map("created_at")
 
   @@index([projectId], map: "idx_benchmark_rows_project")
   @@map("benchmark_rows")
 }
 
 model BugReport {
-  id                   String  @id @default(uuid())
-  projectId            String  @map("project_id")
-  bugId                String  @map("bug_id")
-  title                String
-  description          String?
-  stepsToReproduce     String? @map("steps_to_reproduce")
-  expectedResult       String? @map("expected_result")
-  actualResult         String? @map("actual_result")
-  severity             String?
-  priority             String?
-  environment          String?
-  rootCauseSuggestion  String? @map("root_cause_suggestion")
-  sourceTestCase       String? @map("source_test_case")
-  status               String  @default("Open")
-  createdAt            String  @map("created_at")
+  id                  String   @id @default(uuid())
+  projectId           String   @map("project_id")
+  bugId               String   @map("bug_id")
+  title               String
+  module              String?
+  description         String?
+  preconditions       String?
+  testData            String?  @map("test_data")
+  stepsToReproduce    String?  @map("steps_to_reproduce")
+  expectedResult      String?  @map("expected_result")
+  actualResult        String?  @map("actual_result")
+  severity            String?
+  priority            String?
+  frequency           String? // Always | Intermittent | Rare
+  environment         String?
+  rootCauseSuggestion String?  @map("root_cause_suggestion")
+  sourceTestCase      String?  @map("source_test_case")
+  comments            String?
+  status              String   @default("Open")
+  // Evidence (screenshots/video/console/HAR) captured by the execution
+  // engine. JSON array, same convention as Message.documentsJson. Deliberately
+  // NOT writable by the agent's save_bug_reports tool — it holds keys to real
+  // artifacts, so only the execution path may populate it.
+  attachmentsJson     String?  @map("attachments_json")
+  // When the defect was reported, as distinct from when this row happened to
+  // be written — a bug filed from a run that finished earlier should carry the
+  // run's time, not the insert's. Backfilled from created_at for existing rows.
+  dateReported        DateTime @map("date_reported")
+  createdAt           DateTime @map("created_at")
 
   @@index([projectId], map: "idx_bug_reports_project")
   @@map("bug_reports")
 }
 
 model Message {
-  id            String  @id @default(uuid())
-  projectId     String  @map("project_id")
+  id            String   @id @default(uuid())
+  projectId     String   @map("project_id")
   role          String
   content       String
-  createdAt     String  @map("created_at")
-  documentsJson String? @map("documents_json")
+  createdAt     DateTime @map("created_at")
+  documentsJson String?  @map("documents_json")
 
   @@index([projectId], map: "idx_messages_project")
   @@map("messages")
 }
 
 model GeneratedDocument {
-  id        String @id @default(uuid())
-  projectId String @map("project_id")
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
   title     String
-  docType   String @map("doc_type")
+  docType   String   @map("doc_type")
   filename  String
   content   String
-  createdAt String @map("created_at")
+  createdAt DateTime @map("created_at")
 
   @@index([projectId], map: "idx_generated_documents_project")
   @@map("generated_documents")
+}
+
+// --- Execution ----------------------------------------------------------
+//
+// Everything below exists so a test run survives the turn it happened in.
+// Before these, run_browser_test/run_api_test executed for real and then
+// returned only into the agent's context — so traceability stopped at
+// REQ → TC, and any "Test Execution Report" was counting rows created, not
+// tests passed.
+//
+// These follow the same conventions as the models above: project_id is a
+// plain indexed column rather than a Prisma relation (Project has no
+// back-relations anywhere; deleteProject() in db.ts does explicit deleteMany
+// calls in a transaction), and cross-entity references between logical
+// entities are loose string IDs (scenarioRef, caseRef, caseId) matching the
+// existing TestCase.sourceRequirement → Requirement.reqId pattern rather than
+// foreign keys these tables have never had.
+
+model TestScenario {
+  id                String   @id @default(uuid())
+  projectId         String   @map("project_id")
+  scenarioId        String   @map("scenario_id")
+  scenario          String
+  priority          String?
+  sourceRequirement String?  @map("source_requirement")
+  createdAt         DateTime @map("created_at")
+
+  @@index([projectId], map: "idx_test_scenarios_project")
+  @@map("test_scenarios")
+}
+
+// A saved, re-runnable script body. The point is that the agent stops
+// rewriting the same Playwright body every turn: save it once, then a suite
+// run and a re-run-to-verify-a-fix execute the identical script, which is
+// also what makes run-over-run comparison (and therefore flakiness) definable.
+model TestScript {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  scriptId  String   @map("script_id")
+  name      String
+  testType  String   @map("test_type") // browser | api
+  caseRef   String?  @map("case_ref") // TestCase.caseId this implements
+  url       String? // browser scripts: URL to navigate to first
+  body      String
+  // Per-script timeout. Idle/session-timeout tests genuinely need 15-30
+  // minutes of wall clock, so the ceiling has to travel with the script
+  // rather than being a global constant sized for quick tests.
+  timeoutMs Int?     @map("timeout_ms")
+  // Playwright storageState reuse. useSession loads a previously saved
+  // authenticated session so a suite doesn't log in from scratch every time;
+  // saveSession writes one out after the script runs. Idle-timeout tests
+  // deliberately leave useSession null — starting from a fresh, genuinely
+  // unauthenticated context is the whole point of the test.
+  useSession  String? @map("use_session")
+  saveSession String? @map("save_session")
+  createdAt DateTime @map("created_at")
+  updatedAt DateTime @map("updated_at")
+
+  @@index([projectId], map: "idx_test_scripts_project")
+  @@map("test_scripts")
+}
+
+model TestRun {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  scriptId    String?   @map("script_id") // TestScript.id; null for ad-hoc runs
+  label       String?
+  status      String // running | passed | failed | partial
+  triggeredBy String?   @map("triggered_by") // "agent" or a userId
+  startedAt   DateTime  @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+
+  executions TestExecution[]
+
+  @@index([projectId], map: "idx_test_runs_project")
+  @@map("test_runs")
+}
+
+// One test case's result within one run. caseId is what finally connects
+// TC → RUN, so a failure can be traced back to the requirement it came from
+// and forward to the bug it produced. Evidence keys (trace/screenshot/console
+// /HAR) land here in Phase 3.
+model TestExecution {
+  id           String   @id @default(uuid())
+  projectId    String   @map("project_id") // denormalized to match the per-project index every other table has
+  runId        String   @map("run_id")
+  caseId       String?  @map("case_id") // TestCase.caseId
+  passed       Boolean
+  actualResult String?  @map("actual_result")
+  errorMessage String?  @map("error_message")
+  durationMs   Int?     @map("duration_ms")
+  executedAt   DateTime @map("executed_at")
+
+  // Evidence captured during the run and uploaded to R2 under
+  // runs/<runId>/<execId>/. These are storage keys, not URLs — the download
+  // route resolves and authorizes them per project, exactly like exports and
+  // generated documents. Null means that artifact wasn't produced: API tests
+  // have no browser artifacts at all, and a screenshot is only taken on
+  // failure, so null is normal rather than an error.
+  traceKey      String? @map("trace_key")
+  screenshotKey String? @map("screenshot_key")
+  consoleLogKey String? @map("console_log_key")
+  harKey        String? @map("har_key")
+  videoKey      String? @map("video_key")
+
+  // The one real FK here: executions have no meaning apart from their run and
+  // are only ever created/deleted with it, so cascade is safe and keeps
+  // deleteProject() from needing a second ordered delete.
+  run TestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([projectId], map: "idx_test_executions_project")
+  @@index([runId], map: "idx_test_executions_run")
+  @@index([caseId], map: "idx_test_executions_case")
+  @@map("test_executions")
 }
 
 // --- Auth (Auth.js / next-auth v5, @auth/prisma-adapter) ---------------

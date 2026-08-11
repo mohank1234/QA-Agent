@@ -16,7 +16,13 @@ function buildSheetBuffer(rows: Record<string, unknown>[], sheetName: string): B
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
-export type ExportKind = "requirements" | "test_cases" | "benchmark" | "bug_reports";
+export type ExportKind =
+  | "requirements"
+  | "test_scenarios"
+  | "test_cases"
+  | "benchmark"
+  | "bug_reports"
+  | "test_executions";
 
 async function rowsForKind(projectId: string, kind: ExportKind) {
   switch (kind) {
@@ -37,6 +43,22 @@ async function rowsForKind(projectId: string, kind: ExportKind) {
         sheetName: "Requirements",
       };
     }
+    case "test_scenarios": {
+      const rows = await prisma.testScenario.findMany({
+        where: { projectId },
+        orderBy: { scenarioId: "asc" },
+      });
+      return {
+        rows: rows.map((r) => ({
+          "Scenario ID": r.scenarioId,
+          Scenario: r.scenario,
+          Priority: r.priority,
+          "Requirement Mapping": r.sourceRequirement,
+        })),
+        baseName: "test_scenarios",
+        sheetName: "Test Scenarios",
+      };
+    }
     case "test_cases": {
       const rows = await prisma.testCase.findMany({
         where: { projectId },
@@ -46,18 +68,67 @@ async function rowsForKind(projectId: string, kind: ExportKind) {
         rows: rows.map((r) => ({
           "Test Case ID": r.caseId,
           "Requirement Mapping": r.sourceRequirement,
+          "Scenario Mapping": r.scenarioRef,
           Module: r.module,
           "Test Type": r.testType,
           Priority: r.priority,
           Severity: r.severity,
           Preconditions: r.preconditions,
+          "Test Data": r.testData,
           "Test Steps": r.steps,
           "Expected Result": r.expectedResult,
-          "Test Data": r.testData,
+          // Blank rather than "Not run" — an empty cell in a QA sheet reads
+          // unambiguously as "no result yet", where a filled-in word can be
+          // mistaken for an outcome.
+          "Actual Result": r.actualResult ?? "",
+          Status: r.status ?? "",
+          "Last Executed": r.lastExecutedAt ? r.lastExecutedAt.toISOString() : "",
+          Comments: r.comments ?? "",
         })),
         baseName: "test_cases",
         sheetName: "Test Cases",
       };
+    }
+    case "test_executions": {
+      const runs = await prisma.testRun.findMany({
+        where: { projectId },
+        orderBy: { startedAt: "desc" },
+        include: { executions: { orderBy: { executedAt: "asc" } } },
+      });
+      // Flattened one row per execution — a run with no executions still
+      // appears, so an aborted run isn't invisible in the report.
+      const rows = runs.flatMap((run) =>
+        run.executions.length === 0
+          ? [
+              {
+                "Run ID": run.id,
+                "Run Label": run.label,
+                "Run Status": run.status,
+                "Started At": run.startedAt.toISOString(),
+                "Finished At": run.finishedAt ? run.finishedAt.toISOString() : "",
+                "Test Case ID": "",
+                Result: "",
+                "Actual Result": "",
+                Error: "",
+                "Duration (ms)": "",
+                "Executed At": "",
+              },
+            ]
+          : run.executions.map((e) => ({
+              "Run ID": run.id,
+              "Run Label": run.label,
+              "Run Status": run.status,
+              "Started At": run.startedAt.toISOString(),
+              "Finished At": run.finishedAt ? run.finishedAt.toISOString() : "",
+              "Test Case ID": e.caseId ?? "",
+              Result: e.passed ? "Pass" : "Fail",
+              "Actual Result": e.actualResult ?? "",
+              Error: e.errorMessage ?? "",
+              "Duration (ms)": e.durationMs ?? "",
+              "Executed At": e.executedAt.toISOString(),
+            }))
+      );
+      return { rows, baseName: "test_executions", sheetName: "Execution History" };
     }
     case "bug_reports": {
       const rows = await prisma.bugReport.findMany({
@@ -65,19 +136,32 @@ async function rowsForKind(projectId: string, kind: ExportKind) {
         orderBy: { bugId: "asc" },
       });
       return {
+        // Column order follows the bug report template the project documents,
+        // not the schema's field order.
         rows: rows.map((r) => ({
           "Bug ID": r.bugId,
-          Title: r.title,
-          Description: r.description,
-          "Steps to Reproduce": r.stepsToReproduce,
-          "Expected Result": r.expectedResult,
-          "Actual Result": r.actualResult,
+          "Title / Summary": r.title,
+          Module: r.module,
+          Environment: r.environment,
           Severity: r.severity,
           Priority: r.priority,
-          Environment: r.environment,
+          "Date Reported": r.dateReported.toISOString(),
+          Status: r.status,
+          Preconditions: r.preconditions,
+          "Test Data": r.testData,
+          Description: r.description,
+          "Steps to Reproduce": r.stepsToReproduce,
+          "Actual Result": r.actualResult,
+          "Expected Result": r.expectedResult,
+          Frequency: r.frequency,
+          Attachments: r.attachmentsJson
+            ? (JSON.parse(r.attachmentsJson) as { label: string }[])
+                .map((a) => a.label)
+                .join(", ")
+            : "",
           "Root Cause Suggestion": r.rootCauseSuggestion,
           "Source Test Case": r.sourceTestCase,
-          Status: r.status,
+          Comments: r.comments,
         })),
         baseName: "bug_reports",
         sheetName: "Bug Reports",

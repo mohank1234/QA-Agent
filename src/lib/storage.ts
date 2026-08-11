@@ -43,6 +43,37 @@ export function exportKey(projectId: string, fileName: string): string {
 export function generatedDocKey(projectId: string, fileName: string): string {
   return `generated/${projectId}/${safeFileName(fileName)}`;
 }
+// Test evidence (Playwright trace, screenshot, console log, HAR, video).
+// Namespaced by project first — like every other prefix here — so a project's
+// whole evidence tree can be deleted with it, then by run and execution so a
+// single execution's artifacts stay grouped.
+export function runEvidenceKey(
+  projectId: string,
+  runId: string,
+  executionId: string,
+  fileName: string
+): string {
+  return `runs/${projectId}/${safeFileName(runId)}/${safeFileName(executionId)}/${safeFileName(fileName)}`;
+}
+
+// Saved Playwright storageState (cookies + localStorage for an authenticated
+// session), reused across runs so a suite logs in once instead of per test.
+// Deliberately NOT under runs/ — a session outlives the run that created it,
+// and must not be swept away with that run's evidence. It IS under the
+// project prefix, so it still dies with the project.
+export function sessionStateKey(projectId: string, name: string): string {
+  return `sessions/${projectId}/${safeFileName(name)}.json`;
+}
+
+// Turns a stored evidence key back into the route that serves it. Kept next to
+// runEvidenceKey so the two can't drift: the route's path segments are exactly
+// the key's, minus the "runs/" prefix.
+export function evidenceUrlFromKey(key: string): string | null {
+  const parts = key.split("/");
+  if (parts.length !== 5 || parts[0] !== "runs") return null;
+  const [, projectId, runId, executionId, fileName] = parts;
+  return `/api/evidence/${projectId}/${runId}/${executionId}/${fileName}`;
+}
 
 export async function putObject(key: string, body: Buffer, contentType?: string): Promise<void> {
   await client.send(

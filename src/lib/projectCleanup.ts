@@ -2,7 +2,7 @@ import { deleteProject, listExpiredGuestProjectIds } from "./db";
 import { deleteObjectsWithPrefix } from "./storage";
 import { logger } from "./logger";
 
-// The one place that deletes a project completely (DB rows + its 3 R2
+// The one place that deletes a project completely (DB rows + its 5 R2
 // object prefixes) — used by both the manual DELETE route and the
 // guest-expiry sweep below, so the two can't drift out of sync on what
 // "delete a project" actually means.
@@ -12,6 +12,8 @@ export async function deleteProjectCompletely(projectId: string): Promise<void> 
     deleteObjectsWithPrefix(`uploads/${projectId}/`),
     deleteObjectsWithPrefix(`exports/${projectId}/`),
     deleteObjectsWithPrefix(`generated/${projectId}/`),
+    deleteObjectsWithPrefix(`runs/${projectId}/`),
+    deleteObjectsWithPrefix(`sessions/${projectId}/`),
   ]);
 }
 
