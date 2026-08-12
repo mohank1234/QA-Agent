@@ -16,6 +16,7 @@ import {
   DOCUMENT_TEMPLATES,
   type TemplatedDocType,
 } from "./documentTemplates";
+import { buildDocumentFileName } from "./documentNaming";
 import { markdownToDocxBuffer } from "./tools/generateDocx";
 import * as jira from "./tools/jiraClient";
 import {
@@ -45,20 +46,6 @@ import {
 } from "./db";
 import { uploadKey, generatedDocKey, putObject, getObject, evidenceUrlFromKey } from "./storage";
 import { logger } from "./logger";
-
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 60) || "document"
-  );
-}
-
-function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
 
 function text(payload: unknown) {
   return {
@@ -950,7 +937,15 @@ export function buildProjectTools(
         }
 
         const buffer = await markdownToDocxBuffer(title, content);
-        const fileName = `${timestamp()}_${slugify(title)}.docx`;
+        // Named for a human recipient, and versioned against what this project
+        // already has so a regenerated document reads as a revision instead of
+        // colliding or overwriting.
+        const existing = await listGeneratedDocuments(projectId);
+        const { fileName } = buildDocumentFileName(
+          title,
+          docType,
+          existing.map((d) => d.filename)
+        );
         await putObject(
           generatedDocKey(projectId, fileName),
           buffer,
