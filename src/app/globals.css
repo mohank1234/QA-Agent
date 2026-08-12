@@ -362,6 +362,34 @@ button:disabled {
   background: transparent;
 }
 
+/* Indeterminate progress bar.
+   Deliberately indeterminate: the chat request returns only when the whole
+   turn is finished, so the client has no idea how far along it is. A bar that
+   filled to a percentage would be inventing that number. This shows motion
+   (work is happening) without claiming progress it cannot know. */
+.app-progress {
+  position: relative;
+  height: 3px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--app-accent-soft);
+}
+.app-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--app-accent), transparent);
+  animation: app-progress-slide 1.4s infinite ease-in-out;
+}
+
+@keyframes app-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
 /* Typing indicator — motion is the difference between "the app is working"
    and "the app is stuck". */
 .app-dots {

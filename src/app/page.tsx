@@ -229,16 +229,30 @@ export default function Home() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const newProjectInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
       .then((data) => {
+        // Deliberately does NOT auto-select the most recent project: the app
+        // opens on the New Chat screen so starting fresh work is the default
+        // action, rather than dropping you into whatever you last touched.
         setProjects(data.projects ?? []);
-        if (data.projects?.length) setSelectedProjectId(data.projects[0].id);
       })
       .catch(() => setError("Could not reach the server to load projects."));
   }, []);
+
+  // Returns to the New Chat screen. Also reachable by clicking the logo.
+  function startNewChat() {
+    setSelectedProjectId(null);
+    setActiveTab("chat");
+    setChatInput("");
+    setError(null);
+    setNewProjectName("");
+    // Focused on the next frame, after the landing screen has rendered.
+    requestAnimationFrame(() => newProjectInputRef.current?.focus());
+  }
 
   async function refreshArtifacts(projectId: string) {
     const [reqRes, scnRes, tcRes, execRes, bugRes, benchRes, docRes] = await Promise.all([
@@ -511,7 +525,27 @@ export default function Home() {
           overflowY: "auto",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* The logo is the way home: clicking it always returns to the New
+            Chat screen, which is the behaviour people already expect from a
+            product wordmark. */}
+        <button
+          onClick={startNewChat}
+          title="New chat"
+          className="app-nav-item"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "4px 6px",
+            margin: "-4px -6px",
+            border: "none",
+            background: "transparent",
+            textAlign: "left",
+            cursor: "pointer",
+            color: "inherit",
+            font: "inherit",
+          }}
+        >
           <div
             style={{
               width: 32,
@@ -538,7 +572,18 @@ export default function Home() {
               Analyze · design · execute · report
             </p>
           </div>
-        </div>
+        </button>
+
+        <button
+          onClick={startNewChat}
+          className="app-btn app-btn-primary"
+          style={{ width: "100%", padding: "9px 14px", fontSize: 13.5 }}
+        >
+          <span style={{ fontSize: 15, lineHeight: 1 }} aria-hidden>
+            +
+          </span>
+          New chat
+        </button>
 
         <div
           style={{
@@ -566,7 +611,9 @@ export default function Home() {
               </button>
             </>
           ) : (
-            <Link href="/login" className="app-btn app-btn-primary" style={{ width: "100%" }}>
+            // Secondary: "New chat" above is the primary action, and two
+            // solid buttons stacked would compete rather than guide.
+            <Link href="/login" className="app-btn" style={{ width: "100%" }}>
               Sign in
             </Link>
           )}
@@ -791,13 +838,91 @@ export default function Home() {
             >
               ◈
             </div>
-            <div style={{ fontSize: 17, fontWeight: 650, color: "var(--app-text)" }}>
-              Create or select a project to start
+            <div style={{ fontSize: 22, fontWeight: 680, color: "var(--app-text)", letterSpacing: "-0.02em" }}>
+              Start a new QA workspace
             </div>
-            <div style={{ fontSize: 13.5, maxWidth: 380, lineHeight: 1.55 }}>
-              Each project is its own workspace — documents, requirements, test cases, runs and
-              reports stay together.
+            <div style={{ fontSize: 13.5, maxWidth: 400, lineHeight: 1.55 }}>
+              Name it, upload your requirements, and the agent will analyze them, design tests,
+              run them, and report on what it found.
             </div>
+
+            <div style={{ display: "flex", gap: 8, width: "100%", maxWidth: 420, marginTop: 4 }}>
+              <input
+                ref={newProjectInputRef}
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                placeholder="e.g. SmartLeave — Release 2.4"
+                className="app-input"
+                style={{ flex: 1, minWidth: 0, padding: "11px 13px", fontSize: 14 }}
+              />
+              <button
+                onClick={handleCreateProject}
+                disabled={!newProjectName.trim()}
+                className="app-btn app-btn-primary"
+                style={{ padding: "0 18px", fontSize: 14 }}
+              >
+                Create
+              </button>
+            </div>
+
+            {projects.length > 0 && (
+              <div style={{ width: "100%", maxWidth: 420, marginTop: 10 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.07em",
+                    textTransform: "uppercase",
+                    color: "var(--app-text-dim)",
+                    marginBottom: 8,
+                    textAlign: "left",
+                  }}
+                >
+                  Or continue
+                </div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {projects.slice(0, 4).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProjectId(p.id);
+                        setActiveTab("chat");
+                      }}
+                      className="app-card app-card-interactive"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 13px",
+                        textAlign: "left",
+                        color: "var(--app-text)",
+                        font: "inherit",
+                        fontSize: 13.5,
+                      }}
+                    >
+                      <span style={{ opacity: 0.6 }} aria-hidden>
+                        ▤
+                      </span>
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {p.name}
+                      </span>
+                      <span style={{ color: "var(--app-text-dim)" }} aria-hidden>
+                        →
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {sessionStatus !== "loading" && !session?.user && (
               <div
                 className="app-card"
@@ -1060,27 +1185,7 @@ export default function Home() {
                       {messages.map((m, i) => (
                         <ChatBubble key={i} message={m} onPreviewDocument={openChatDocumentPreview} />
                       ))}
-                      {sending && (
-                        <div
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 8,
-                            color: "var(--app-text-dim)",
-                            fontSize: 13,
-                            padding: "8px 12px",
-                            borderRadius: 999,
-                            background: "var(--app-bubble-assistant)",
-                          }}
-                        >
-                          <span className="app-dots" aria-hidden>
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                          Thinking…
-                        </div>
-                      )}
+                      {sending && <WorkingIndicator />}
                     </>
                   )}
                   <div ref={messagesEndRef} />
@@ -1162,6 +1267,60 @@ function formatCountdown(msRemaining: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+// Feedback while a turn is in flight. The chat endpoint returns only when the
+// whole turn is done, so there is no real percentage to show — this reports
+// elapsed time (which is true) and sets expectations for the long operations,
+// rather than a progress number that would be invented.
+function WorkingIndicator() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Phrased as what typically happens by now, not as a claim about what the
+  // agent is doing at this instant — the client genuinely cannot know that.
+  const hint =
+    seconds < 8
+      ? "Reading your request and any documents"
+      : seconds < 25
+        ? "Analyzing and generating — this usually takes a few moments"
+        : seconds < 60
+          ? "Still working. Long documents and test suites take longer"
+          : "Long-running work. Test runs and full documents can take a few minutes";
+
+  return (
+    <div
+      className="app-card"
+      style={{
+        maxWidth: 420,
+        padding: "12px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 9,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+        <span className="app-dots" style={{ color: "var(--app-accent)" }} aria-hidden>
+          <i />
+          <i />
+          <i />
+        </span>
+        <span style={{ fontWeight: 550 }}>Working…</span>
+        <span
+          style={{ marginLeft: "auto", color: "var(--app-text-dim)", fontVariantNumeric: "tabular-nums" }}
+        >
+          {seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}
+        </span>
+      </div>
+      <div className="app-progress" role="progressbar" aria-label="Working" />
+      <div style={{ fontSize: 12, color: "var(--app-text-dim)" }}>{hint}</div>
+    </div>
+  );
 }
 
 function GuestExpiryBanner({ expiresAt }: { expiresAt: string }) {
