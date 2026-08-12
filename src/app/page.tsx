@@ -173,12 +173,38 @@ const SIDEBAR_LABEL: React.CSSProperties = {
   marginBottom: 8,
 };
 
-const QUICK_ACTIONS: { label: string; icon: string; hint: string; message: string }[] = [
+type DocumentFormat = {
+  id: string;
+  docType: "test_plan" | "test_strategy";
+  name: string;
+  description: string;
+  basedOn: string;
+  bestFor: string;
+  length: string;
+  sectionCount: number;
+  sections: string[];
+  accent: string;
+};
+
+const QUICK_ACTIONS: {
+  label: string;
+  icon: string;
+  hint: string;
+  message?: string;
+  /** Opens the format picker instead of sending immediately. */
+  chooseFormatFor?: "test_plan" | "test_strategy";
+}[] = [
   {
     label: "Test Plan",
     icon: "📋",
-    hint: "Scope, approach, risks, entry/exit criteria",
-    message: "Generate a full Test Plan and Test Strategy for this project based on the uploaded documents.",
+    hint: "Choose a format — IEEE 829, ISO 29119, Agile or Enterprise UAT",
+    chooseFormatFor: "test_plan",
+  },
+  {
+    label: "Test Strategy",
+    icon: "🧭",
+    hint: "Choose a format — Standard, Risk-Based or Agile QA",
+    chooseFormatFor: "test_strategy",
   },
   {
     label: "Test Cases",
@@ -230,6 +256,8 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const newProjectInputRef = useRef<HTMLInputElement>(null);
+  const [formatPickerFor, setFormatPickerFor] = useState<"test_plan" | "test_strategy" | null>(null);
+  const [documentFormats, setDocumentFormats] = useState<DocumentFormat[]>([]);
 
   useEffect(() => {
     fetch("/api/projects")
@@ -242,6 +270,28 @@ export default function Home() {
       })
       .catch(() => setError("Could not reach the server to load projects."));
   }, []);
+
+  // The format catalogue is static, so it's fetched once rather than each
+  // time the picker opens.
+  useEffect(() => {
+    fetch("/api/document-formats")
+      .then((r) => r.json())
+      .then((d) => setDocumentFormats(d.formats ?? []))
+      .catch(() => {
+        /* picker falls back to a plain request without a named format */
+      });
+  }, []);
+
+  function chooseFormat(format: DocumentFormat) {
+    setFormatPickerFor(null);
+    const label = format.docType === "test_plan" ? "Test Plan" : "Test Strategy";
+    sendMessage(
+      `Generate a complete ${label} for this project using the "${format.name}" format (templateId: "${format.id}"). ` +
+        `Follow that format's required sections exactly, in order, and write real content under every one. ` +
+        `Use markdown tables for anything matrix-shaped — risk matrices, RACI, severity/priority definitions, environments, schedules — so the Word document renders them as proper tables. ` +
+        `Save it with save_document using docType "${format.docType}" and templateId "${format.id}".`
+    );
+  }
 
   // Returns to the New Chat screen. Also reachable by clicking the logo.
   function startNewChat() {
@@ -1077,7 +1127,11 @@ export default function Home() {
                         {QUICK_ACTIONS.map((action) => (
                           <button
                             key={action.label}
-                            onClick={() => sendMessage(action.message)}
+                            onClick={() =>
+                              action.chooseFormatFor
+                                ? setFormatPickerFor(action.chooseFormatFor)
+                                : sendMessage(action.message!)
+                            }
                             className="app-card app-card-interactive"
                             style={{
                               display: "flex",
@@ -1247,6 +1301,15 @@ export default function Home() {
         )}
       </main>
 
+      {formatPickerFor && (
+        <FormatPicker
+          docType={formatPickerFor}
+          formats={documentFormats}
+          onChoose={chooseFormat}
+          onClose={() => setFormatPickerFor(null)}
+        />
+      )}
+
       {previewFilename && previewDownloadHref && (
         <DocumentPreviewModal
           filename={previewFilename}
@@ -1267,6 +1330,175 @@ function formatCountdown(msRemaining: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+// Format chooser. Different formats genuinely suit different delivery models —
+// a regulated programme and a two-week sprint do not sign off the same
+// document — so this shows what each is based on and what it suits, and lets
+// the section list be inspected before committing.
+function FormatPicker({
+  docType,
+  formats,
+  onChoose,
+  onClose,
+}: {
+  docType: "test_plan" | "test_strategy";
+  formats: DocumentFormat[];
+  onChoose: (f: DocumentFormat) => void;
+  onClose: () => void;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const options = formats.filter((f) => f.docType === docType);
+  const label = docType === "test_plan" ? "Test Plan" : "Test Strategy";
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,10,15,0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="app-card"
+        style={{
+          width: "100%",
+          maxWidth: 720,
+          maxHeight: "85vh",
+          overflowY: "auto",
+          padding: 22,
+          boxShadow: "var(--app-shadow-lg)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 680, letterSpacing: "-0.01em" }}>
+              Choose a {label} format
+            </div>
+            <div style={{ fontSize: 13, color: "var(--app-text-dim)", marginTop: 4 }}>
+              The document is built to the format you pick — sections, tables and styling.
+            </div>
+          </div>
+          <button onClick={onClose} className="app-btn app-btn-ghost" aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
+          {options.length === 0 && (
+            <div style={{ fontSize: 13, color: "var(--app-text-dim)" }}>
+              Couldn&apos;t load formats. Close this and just ask in chat instead.
+            </div>
+          )}
+          {options.map((f) => (
+            <div key={f.id} className="app-card" style={{ padding: 0, overflow: "hidden" }}>
+              <button
+                onClick={() => onChoose(f)}
+                style={{
+                  display: "flex",
+                  width: "100%",
+                  gap: 12,
+                  padding: "14px 15px",
+                  textAlign: "left",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  color: "var(--app-text)",
+                  font: "inherit",
+                }}
+              >
+                {/* Accent stripe previews the colour the document will use. */}
+                <span
+                  style={{
+                    width: 4,
+                    alignSelf: "stretch",
+                    borderRadius: 2,
+                    background: f.accent,
+                    flexShrink: 0,
+                  }}
+                  aria-hidden
+                />
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 650 }}>{f.name}</span>
+                  <span
+                    style={{
+                      display: "block",
+                      fontSize: 12.5,
+                      color: "var(--app-text-dim)",
+                      marginTop: 3,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {f.description}
+                  </span>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    <span className="app-pill app-pill-info">{f.bestFor}</span>
+                    <span className="app-pill">{f.sectionCount} sections</span>
+                    <span className="app-pill">{f.length}</span>
+                  </span>
+                </span>
+                <span style={{ color: "var(--app-text-dim)", alignSelf: "center" }} aria-hidden>
+                  →
+                </span>
+              </button>
+
+              <div
+                style={{
+                  borderTop: "1px solid var(--app-border)",
+                  padding: "8px 15px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ fontSize: 11.5, color: "var(--app-text-dim)" }}>
+                  Based on {f.basedOn}
+                </span>
+                <button
+                  onClick={() => setExpanded(expanded === f.id ? null : f.id)}
+                  className="app-btn app-btn-ghost"
+                  style={{ marginLeft: "auto", padding: "3px 8px", fontSize: 12 }}
+                >
+                  {expanded === f.id ? "Hide sections" : "View sections"}
+                </button>
+              </div>
+
+              {expanded === f.id && (
+                <ol
+                  style={{
+                    margin: 0,
+                    padding: "10px 15px 14px 34px",
+                    fontSize: 12.5,
+                    color: "var(--app-text-dim)",
+                    lineHeight: 1.7,
+                    background: "var(--app-surface)",
+                  }}
+                >
+                  {f.sections.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Feedback while a turn is in flight. The chat endpoint returns only when the

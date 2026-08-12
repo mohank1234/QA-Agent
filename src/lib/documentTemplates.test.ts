@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import {
-  checkAgainstTemplate,
-  TEST_PLAN_TEMPLATE,
-  TEST_STRATEGY_TEMPLATE,
-} from "./documentTemplates";
+import { checkAgainstTemplate, getTemplate } from "./documentTemplates";
 
-function docWith(sections: string[]): string {
+// The defaults, which are what an unqualified "test plan" resolves to.
+const TEST_PLAN_TEMPLATE = getTemplate("test_plan")!;
+const TEST_STRATEGY_TEMPLATE = getTemplate("test_strategy")!;
+
+function docWith(sections: readonly string[]): string {
   return sections.map((s) => `## ${s}\n\nSome content.\n`).join("\n");
 }
 
@@ -25,7 +25,7 @@ describe("checkAgainstTemplate", () => {
     // The whole point of rejecting: the agent has to be told what to add,
     // otherwise it regenerates something equally incomplete.
     const partial = TEST_PLAN_TEMPLATE.sections.filter(
-      (s) => s !== "Approvals" && s !== "Suspension Criteria and Resumption Requirements"
+      (s: string) => s !== "Approvals" && s !== "Suspension Criteria and Resumption Requirements"
     );
     const result = checkAgainstTemplate("test_plan", docWith(partial));
     expect(result?.ok).toBe(false);

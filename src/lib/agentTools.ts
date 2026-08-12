@@ -12,9 +12,11 @@ import { draftBugFromExecution, verifyFix } from "./tools/closeLoop";
 import { buildReportData } from "./tools/reportData";
 import {
   checkAgainstTemplate,
-  templateOutline,
-  DOCUMENT_TEMPLATES,
-  type TemplatedDocType,
+  allTemplateOutlines,
+  getTemplate,
+  templatesFor,
+  TEMPLATES,
+  isTemplatedDocType,
 } from "./documentTemplates";
 import { buildDocumentFileName } from "./documentNaming";
 import { markdownToDocxBuffer } from "./tools/generateDocx";
@@ -32,6 +34,7 @@ import {
   computeProjectStats,
   saveGeneratedDocument,
   listGeneratedDocuments,
+  getProject,
   insertTestScenario,
   listTestScenariosForProject,
   saveTestScript,
@@ -913,39 +916,57 @@ export function buildProjectTools(
           "other",
         ])
         .describe("Category of document"),
+      templateId: z
+        .string()
+        .optional()
+        .describe(
+          `Which format to use, for test_plan and test_strategy. If the user picked a format, pass its id. Omit to use the default (ieee-829 / istqb-standard). Available:\n${TEMPLATES.map(
+            (t) => `  ${t.id} (${t.docType}) — ${t.name}: ${t.bestFor}`
+          ).join("\n")}`
+        ),
       content: z
         .string()
         .describe(
-          `Full document content in Markdown: '#'/'##'/'###' for headings, '| a | b |' rows for tables, '- ' for bullet lists, '**text**' for bold. This becomes the real Word document, so write it out completely here — not abbreviated.\n\nFor test_plan and test_strategy the section structure is mandatory:\n\n${templateOutline(
-            "test_plan"
-          )}\n\n${templateOutline("test_strategy")}`
+          `Full document content in Markdown: '#'/'##'/'###' for headings, '| a | b |' rows for tables, '- ' for bullet lists, '**text**' for bold. This becomes the real Word document, so write it out completely here — not abbreviated. Use tables generously for anything matrix-shaped (risk matrices, RACI, severity/priority definitions, entry/exit criteria, schedules) — they render as properly formatted tables with styled headers.\n\nFor test_plan and test_strategy the chosen format's section structure is mandatory:\n\n${allTemplateOutlines()}`
         ),
     },
-    async ({ title, docType, content }) => {
+    async ({ title, docType, content, templateId }) => {
       try {
         // A deliverable that skips required sections is rejected here rather
         // than saved and discovered later by whoever has to sign it off. The
         // agent gets the exact missing headings back so it can fix them.
-        const check = checkAgainstTemplate(docType, content);
+        const check = checkAgainstTemplate(docType, content, templateId);
         if (check && !check.ok) {
           return text({
-            error: `This ${docType.replace("_", " ")} is missing required sections and was NOT saved.`,
+            error: `This ${check.templateName} is missing required sections and was NOT saved.`,
             missingSections: check.missing,
             instruction: `Regenerate the document including every missing section above, as '## ' headings, in the template's order. Write real content under each — if a section genuinely does not apply, keep the heading and state why in one line rather than dropping it.`,
-            requiredOrder: DOCUMENT_TEMPLATES[docType as TemplatedDocType].sections,
+            requiredOrder: getTemplate(docType, templateId)?.sections,
           });
         }
+        const template = getTemplate(docType, templateId);
 
-        const buffer = await markdownToDocxBuffer(title, content);
         // Named for a human recipient, and versioned against what this project
         // already has so a regenerated document reads as a revision instead of
         // colliding or overwriting.
         const existing = await listGeneratedDocuments(projectId);
-        const { fileName } = buildDocumentFileName(
+        const { fileName, version } = buildDocumentFileName(
           title,
           docType,
           existing.map((d) => d.filename)
         );
+
+        const buffer = await markdownToDocxBuffer(title, content, {
+          documentType: template
+            ? template.docType === "test_plan"
+              ? "Test Plan"
+              : "Test Strategy"
+            : docType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+          templateName: template?.name,
+          projectName: (await getProject(projectId))?.name,
+          version: `${version}.0`,
+          theme: template?.theme,
+        });
         await putObject(
           generatedDocKey(projectId, fileName),
           buffer,
@@ -964,6 +985,32 @@ export function buildProjectTools(
         logger.error({ err, projectId }, "save_document failed");
         return text({ error: err instanceof Error ? err.message : String(err) });
       }
+    }
+  );
+
+  const list_document_formats = tool(
+    "list_document_formats",
+    "List the available Test Plan and Test Strategy formats the user can choose from, with what each is based on and what it suits. Call this when the user asks for a plan or strategy without naming a format, and offer them the choice before writing — different formats suit regulated delivery, modern standards, agile sprints and client UAT, and picking for them is usually wrong. Pass the chosen id as templateId to save_document.",
+    {
+      docType: z
+        .enum(["test_plan", "test_strategy"])
+        .optional()
+        .describe("Restrict to one document type; omit for all"),
+    },
+    async ({ docType }) => {
+      const list = docType ? templatesFor(docType) : TEMPLATES;
+      return text(
+        list.map((t) => ({
+          id: t.id,
+          docType: t.docType,
+          name: t.name,
+          description: t.description,
+          basedOn: t.basis,
+          bestFor: t.bestFor,
+          length: t.lengthGuide,
+          sectionCount: t.sections.length,
+        }))
+      );
     }
   );
 
@@ -1042,6 +1089,7 @@ export function buildProjectTools(
       jira_add_comment,
       export_artifact,
       save_document,
+      list_document_formats,
       list_generated_documents,
     ],
   });
@@ -1080,5 +1128,6 @@ export const PROJECT_TOOL_NAMES = [
   "mcp__qa__jira_add_comment",
   "mcp__qa__export_artifact",
   "mcp__qa__save_document",
+  "mcp__qa__list_document_formats",
   "mcp__qa__list_generated_documents",
 ];
