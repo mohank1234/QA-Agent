@@ -10,6 +10,12 @@ import {
 } from "./tools/executeTests";
 import { draftBugFromExecution, verifyFix } from "./tools/closeLoop";
 import { buildReportData } from "./tools/reportData";
+import {
+  checkAgainstTemplate,
+  templateOutline,
+  DOCUMENT_TEMPLATES,
+  type TemplatedDocType,
+} from "./documentTemplates";
 import { markdownToDocxBuffer } from "./tools/generateDocx";
 import * as jira from "./tools/jiraClient";
 import {
@@ -905,7 +911,7 @@ export function buildProjectTools(
 
   const save_document = tool(
     "save_document",
-    "Persist a long-form narrative deliverable (Test Plan, Test Strategy, Test Summary Report, Defect Summary Report, Release Readiness Report, Daily QA Status, Requirement Coverage Report, or similar) as a real, downloadable, previewable Word (.docx) document — instead of pasting the whole thing into the chat reply. After calling this, reply in chat with only a short summary (a few sentences: what's covered, key assumptions/gaps) and point the user to the Documents tab; do not also paste the full document text into your chat message.",
+    "Persist ONE long-form narrative deliverable as a real, downloadable, previewable Word (.docx) document — instead of pasting it into the chat reply. A Test Plan and a Test Strategy are two SEPARATE documents and must never be combined into one call: they sit at different levels (a strategy is programme-wide and standing; a plan is per release and cites the strategy), so a merged file is wrong at both. Call this once per document. Test Plan and Test Strategy have required section structures (IEEE 829 / ISO-IEC-IEEE 29119-3 aligned) and are rejected if sections are missing — the error lists exactly what to add. After saving, reply in chat with only a short summary and point the user to the Documents tab; do not also paste the full document text into your message.",
     {
       title: z.string().describe("Document title, e.g. 'SmartLeave Test Plan & Test Strategy'"),
       docType: z
@@ -923,11 +929,26 @@ export function buildProjectTools(
       content: z
         .string()
         .describe(
-          "Full document content in Markdown: '#'/'##'/'###' for headings, '| a | b |' rows for tables, '- ' for bullet lists, '**text**' for bold. This becomes the real Word document, so write it out completely here — not abbreviated."
+          `Full document content in Markdown: '#'/'##'/'###' for headings, '| a | b |' rows for tables, '- ' for bullet lists, '**text**' for bold. This becomes the real Word document, so write it out completely here — not abbreviated.\n\nFor test_plan and test_strategy the section structure is mandatory:\n\n${templateOutline(
+            "test_plan"
+          )}\n\n${templateOutline("test_strategy")}`
         ),
     },
     async ({ title, docType, content }) => {
       try {
+        // A deliverable that skips required sections is rejected here rather
+        // than saved and discovered later by whoever has to sign it off. The
+        // agent gets the exact missing headings back so it can fix them.
+        const check = checkAgainstTemplate(docType, content);
+        if (check && !check.ok) {
+          return text({
+            error: `This ${docType.replace("_", " ")} is missing required sections and was NOT saved.`,
+            missingSections: check.missing,
+            instruction: `Regenerate the document including every missing section above, as '## ' headings, in the template's order. Write real content under each — if a section genuinely does not apply, keep the heading and state why in one line rather than dropping it.`,
+            requiredOrder: DOCUMENT_TEMPLATES[docType as TemplatedDocType].sections,
+          });
+        }
+
         const buffer = await markdownToDocxBuffer(title, content);
         const fileName = `${timestamp()}_${slugify(title)}.docx`;
         await putObject(
