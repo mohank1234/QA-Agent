@@ -18,10 +18,13 @@ on `localhost` for one person.
 
 Convert it into something deployable publicly for a team, on free/low-cost
 infrastructure, without breaking any existing feature or rewriting the app
-from scratch. Work was organized into two phases, each broken into small,
+from scratch. Work was organized into phases, each broken into small,
 independently tested steps — inspect current state, explain impact and risk
 *before* changing anything, implement, test end-to-end, report, only then move
-to the next step.
+to the next step. Phase 1 was the foundation, Phase 2 production readiness,
+and Phase 3 a different problem entirely: the app was deployable and correct
+in the ways that crash loudly, but its actual output — pass rates, reports,
+signed-off documents — still overstated what was known.
 
 ---
 
@@ -144,7 +147,7 @@ response shape everywhere: 401 not signed in, 404 for "doesn't exist" *and*
 
 ---
 
-## Phase 2 — Production readiness (in progress)
+## Phase 2 — Production readiness
 
 ### Step 1: Tailwind CSS + shadcn/ui (adopted incrementally)
 
@@ -559,13 +562,297 @@ have quietly started billing local development too, the moment local
 testing touched chat again. Removing it from `.env.local` (not just from
 Vercel) was necessary, not just tidy.
 
-### Not started yet
+---
 
-- Background jobs (Inngest) — deferred, no concrete need identified yet
+## Phase 3 — Making the output honest
+
+Everything up to here was about getting the app deployable and multi-user.
+This phase is about a different failure mode: the app produced artifacts that
+*looked* finished but quietly overstated what was known. A pass rate computed
+from test cases that had merely been written. A "Test Plan" whose structure
+changed every turn. A document filename with a millisecond timestamp in it.
+None of these are crashes — that's what makes them worth the work.
+
+### Step 1: Test execution that actually persists
+
+Browser and API tests already ran for real, but the result went back into the
+agent's context and was then lost. Nothing reached the database. Two
+consequences: traceability stopped at REQ → TC, and the "Test Execution" and
+"Release Readiness" reports were built from how many test cases had been
+*written* rather than how many had passed — a report that reads as an
+execution summary while measuring authoring effort.
+
+Data model: `TestScenario`, `TestScript`, `TestRun`, `TestExecution`.
+`TestCase` gained `scenarioRef`/`actualResult`/`status`/`comments`/
+`lastExecutedAt`, with `status` deliberately left null until something
+actually runs the case — that null is what distinguishes "not run" from "run
+and passed", and collapsing the two is the whole bug being fixed here.
+`BugReport` gained the seven fields the bug format requires, including
+`dateReported` (when the defect was *observed*, not when the row was written).
+
+Real problems hit:
+- **Prisma's generated migration for the nine String→DateTime column changes
+  was `DROP COLUMN` + `ADD COLUMN NOT NULL`** — which discards every existing
+  timestamp and cannot run at all against a populated table. Same lesson as
+  Phase 1 Step 2, second occurrence: read the generated SQL before applying
+  it. Replaced by hand with in-place `ALTER ... USING` casts.
+- **`::timestamp(3)`, not `::timestamptz`, in those casts.** The latter
+  round-trips through the session time zone and would have silently shifted
+  every value — the kind of data corruption that produces plausible wrong
+  numbers rather than an error.
+- **`migration_lock.toml` was missing entirely**, a leftover from the init
+  migration being hand-baselined back in Phase 1. Broke any `migrate diff`
+  against the directory until it was restored.
+
+Execution design:
+- `executeTests.ts` is the single path where a test both runs *and* is
+  recorded, so an ad-hoc run and a suite run can't diverge in what they
+  persist — the same "one shared function so two definitions can't drift"
+  shape as `deleteProjectCompletely()` in Phase 2 Step 4.
+- Runner startup failures (no Chromium, missing Playwright) are recorded as
+  failed executions rather than vanishing. A run that couldn't start is still
+  a fact about the run.
+- Scripts are saved and re-run rather than rewritten each turn. This is the
+  precondition for regression runs, fix verification, and any definition of
+  flakiness at all — none of which mean anything if the script is different
+  every time.
+- Runs needing over 3 minutes detach and execute in the background (45-minute
+  ceiling), with the `TestRun` row as the progress source of truth. Without
+  this, an idle/session-timeout test — verifying a 15-minute timeout — is
+  simply not expressible. Requires a persistent server, which was already
+  implied by needing a Chromium binary.
+
+Evidence: trace and console log on every browser run; screenshot, video and
+HAR retained on failure only. HAR and video can only be enabled at context
+creation, so they're always recorded and discarded on pass. Written to a
+directory the parent process owns, so a killed run still yields whatever it
+got. Uploaded to R2 under `runs/<projectId>/<runId>/<execId>/`, and an upload
+failure is logged and skipped rather than propagated — losing a screenshot
+must not turn a recorded result into a lost one.
+
+Closing the loop, with the honesty rules enforced in code rather than in the
+prompt:
+- `draft_bug_from_execution` builds a bug from real data only — the verbatim
+  error, the captured evidence, the environment inferred from the tested URL,
+  and the case's own module/preconditions/steps/expected result. It refuses to
+  draft from a passing execution, and attachments cannot be typed in by hand
+  anywhere; they're resolved from storage keys.
+- `verify_fix` re-runs the *same saved script* and judges against real
+  history. It proposes a bug status but never applies one, reports a case with
+  both outcomes in its history as flaky, and cannot return "fixed" for a case
+  that never failed in the first place.
+- `get_report_data` separates design figures (written) from execution figures
+  (actually run). Pass rates are null rather than 0 when nothing has run.
+  Release readiness is five named conditions each carrying its real number,
+  not one score that hides which condition failed.
+
+Then the UI, because the data existing and nothing showing it is only half
+done: Scenarios and Executions tabs, real Actual Result / Status / Last
+Executed on Test Cases, and evidence rendered as links to the captured
+artifacts. The evidence download route serves only the fixed set of artifact
+names the harness produces — the path segments come from a URL, so an
+allow-list, not just a prefix check, is what refuses probes for anything else
+under that prefix. `DataTable` needed generic `{label, url}` list rendering
+for this; `String()`ing an array had been producing `"[object Object]"`.
+
+Also corrected the README, which claimed reports were built from live computed
+stats and not estimated. True for design counts, false for execution reports
+until this step. A doc that overstates the product is the same class of
+problem as a report that overstates the results.
+
+**A real problem this step created, caught afterwards**: a background run can
+last up to 45 minutes, which fits *inside* the 1-hour guest TTL from Phase 2
+Step 4. A guest run started late in that hour would have its project swept
+mid-run, and the execution inserts would then fail on the
+`test_executions → test_runs` foreign key. The sweep now skips projects with a
+run still in flight and defers to a later pass — erring toward the project
+outliving its TTL by minutes rather than a run dying halfway. Runs left at
+"running" by a dead server would otherwise block deletion forever, so anything
+past the same stale cutoff `getTestRunStatus` already uses to report a run as
+abandoned no longer counts as in flight. Two features, each correct alone,
+wrong together — worth remembering as a category.
+
+### Step 2: A regression suite for the invariants
+
+Every verification up to this point was by hand, through real `curl` calls and
+throwaway API routes. Thorough, but not repeatable — none of it would catch a
+regression six commits later. Added Vitest, covering specifically the rules
+whose failure would be **silent and misleading rather than loud**:
+
+- `pct()` returns null, not 0, for an empty denominator. "0% pass rate" when
+  nothing has run is indistinguishable from everything having run and failed.
+- `judgeFixVerdict` never reports "fixed" for a case with no recorded failure,
+  and flags a case with both outcomes in history as flaky.
+- `inferEnvironment` returns undefined rather than guessing when the host
+  names no environment, and doesn't match a name embedded in another word.
+- `runEvidenceKey` strips path components, so a crafted name can't place an
+  object outside its project prefix; `evidenceUrlFromKey` refuses keys that
+  aren't evidence.
+- `needsBackgroundRun` detaches anything past the inline ceiling — being
+  permissive here loses a long test's result to the request timeout.
+
+The verdict rules and `pct` were extracted from their database-bound callers
+to make them testable at all; behaviour unchanged.
+
+**Checked by mutation, not assumed.** Inverting `pct`'s null and dropping the
+prior-failure requirement from the verdict each failed exactly the test
+written for it — which is the only evidence that a passing test is actually
+load-bearing rather than passing vacuously.
+
+Vitest is configured with deliberately fake credentials, since `config.ts`
+(Phase 2 Step 3) validates the environment eagerly at module load and the
+suite must not depend on real ones being present. Currently 47 tests across 6
+files, run with `npm test`.
+
+### Step 3: The interface — affordance and scannability
+
+The UI was styled entirely with inline `style={{}}` (the same fact that made a
+strict CSP pointless back in Phase 1 Step 5). Inline styles cannot express
+`:hover`, `:active` or `:focus-visible` **at all** — so every control looked
+like a label and nothing responded to being clicked. Separately, the tables
+read as undifferentiated walls of text, in an app whose entire output is
+pass/fail.
+
+- Expanded the `--app-*` palette (namespaced in Phase 2 Step 1 precisely so
+  this was safe): a second surface for nested areas, strong border,
+  hover/soft accent variants, elevation shadows, a focus ring, and semantic
+  status colours paired for both themes. Added the interaction classes inline
+  styles can't provide — hover and press states, keyboard-only focus rings,
+  card lift, input focus, row hover. Press feedback moves the control 1px,
+  the cheapest possible confirmation that a click registered. Thin
+  scrollbars, a typing indicator, and a reduced-motion opt-out.
+- Status, severity, priority and result render as coloured pills, so the
+  outcome is what the eye finds first. Long prose cells clamp to 4 lines —
+  unclamped, one multi-line steps cell stretched its row past 400px and only
+  two rows fit on screen; full text stays available on hover and is never
+  truncated in the `.xlsx` export. Timestamps formatted rather than raw ISO
+  (exact value on hover), IDs monospaced so a column of them scans, zebra
+  striping, sticky headers, and explicit widths on prose columns that were
+  being squeezed to ~90px.
+- Empty states everywhere they were missing — a new project previously showed
+  a blank void with no hint that uploading is the first step. Quick actions
+  became real cards naming what each produces. Chat bubbles capped at 78ch,
+  since 70% of a wide monitor is well past a readable line length.
+
+Verified by screenshot in both light and dark themes.
+
+### Step 4: A build that works from a fresh checkout
+
+Vercel deployments started failing with `Module not found: Can't resolve
+'@/generated/prisma/client'`. The Prisma client is generated into
+`src/generated/prisma`, which is gitignored — so it doesn't exist in a fresh
+checkout — and the build script was a bare `next build` that never generated
+it. It had only ever worked locally because the directory was already sitting
+there from earlier development.
+
+Added `prisma generate` to **both** `build` and `postinstall`: postinstall
+covers the normal case, and having it in `build` too means a cached install
+that skips postinstall still can't produce a deployment without a client.
+Verified by deleting `src/generated/prisma` and building from scratch — the
+only way to actually test this, since the whole failure mode is "the machine
+you're on already has it."
+
+### Step 5: A chat entry point, and a progress signal that isn't a lie
+
+Two gaps in the flow. There was no way to start fresh work without hunting for
+the project input, and a turn that takes a minute showed a static "Thinking…"
+that was indistinguishable from a hang.
+
+- "New chat" top-left, and the logo now returns to the same screen — the
+  behaviour a product wordmark is expected to have.
+- The app no longer auto-selects the most recent project on load; it opens on
+  the New Chat screen, so starting work is the default action rather than
+  landing in whatever you last touched.
+- A working indicator with an **indeterminate** progress bar and real elapsed
+  time. Deliberately indeterminate: the chat endpoint returns only when the
+  whole turn is finished, so the client genuinely cannot know how far along it
+  is, and a filling percentage would be inventing one — the same standard
+  applied to null pass rates in Step 1. The accompanying hint escalates with
+  elapsed time so a long document or test run reads as expected rather than
+  broken.
+
+### Step 6: Deliverables a business would actually accept
+
+The generated plan/strategy document had reasonable content in a shape nobody
+could sign off. Three separate problems, fixed in sequence.
+
+**They were one document, and should be two.** A Test Strategy is
+programme-wide, long-lived, and describes how the organisation tests; a Test
+Plan is per release, time-bound, and *cites* the strategy rather than
+restating it. ISTQB treats the strategy as an input to the plan, so a merged
+file is wrong at both levels. Asking for "a test plan and strategy" now
+produces two documents.
+
+**The section structure was whatever the model chose that turn.** Test Plan
+follows the IEEE 829-1998 clause list (19 sections), still the structure most
+teams sign against and the one ISO/IEC/IEEE 29119-3:2021 aligns with; Test
+Strategy follows the standard industry structure. Critically, `save_document`
+now **validates and rejects** a document with missing sections, returning
+exactly which headings to add — a prompt instruction alone did not reliably
+produce a complete document, a rejection does. Heading comparison ignores
+numbering, case and punctuation, so "4. TEST ITEMS" still counts. Reports and
+other document types stay deliberately free-form.
+
+**One fixed structure per type was itself too rigid.** A regulated programme
+and a two-week sprint don't sign off the same document, so the user picks:
+four Test Plan formats (IEEE 829, ISO/IEC/IEEE 29119-3, Agile/Sprint,
+Enterprise/UAT) and three Test Strategy formats (Standard, Risk-Based, Agile
+QA). Clicking Test Plan or Test Strategy opens a picker showing what each
+format is based on, what it suits, its length, and its full section list
+*before* committing. The chosen format is what the document is validated
+against, so validation stays unambiguous. The agent can offer the same choice
+via `list_document_formats`.
+
+**The filenames were machine artifacts.** Documents were being saved as
+`2026-07-29T06-37-04-778Z_smartleave_test_plan_test_strategy.docx` — a
+timestamp to the millisecond and the product name lowercased, on a file that
+gets emailed to stakeholders. Now
+`SmartLeave_Test_Plan_v1.0_2026-08-12.docx`: subject first so files sort by
+product then type, and version before date because a revision is the first
+thing anyone looks for on a reissued document. Regenerating reads the
+project's existing files and continues from the highest version present
+rather than colliding (highest present, not a count — a deleted file must not
+cause a collision). The author's casing survives, so "SmartLeave" and "API"
+stay intact; the document type is appended only when the title doesn't already
+contain it, so a "SmartLeave Test Plan" doesn't become
+`SmartLeave_Test_Plan_Test_Plan`.
+
+**And the `.docx` was default Word styling** — black headings, a grey table
+header, no cover, no page numbers. Correct content in a shape nobody would put
+in front of a client. Added a cover page with an accent rule and a Document
+Control block, section headings in the format's accent colour with a rule
+beneath, tables with a filled accent header, white bold header text,
+alternating row bands and hairline borders (most of what makes these documents
+look prepared, since risk matrices, RACI and severity definitions are all
+matrix-shaped), and a footer with "Page X of Y". Each format carries its own
+theme, so the formats are visually distinguishable.
+
+Verified by generating a real document and **inspecting the `.docx` XML**
+directly — accent colour, header fills, row banding, cover block, page break,
+five tables and the `PAGE`/`NUMPAGES` fields all present. Checking that the
+file opens is not the same as checking that it's styled.
+
+---
+
+## Not started yet
+
+- Background jobs (Inngest) — deferred through Phase 2, but Phase 3 Step 1
+  gave it a concrete justification it didn't have before: background test
+  runs currently rely on a detached process on a persistent server, which is
+  exactly what a serverless host doesn't provide. This is now the main thing
+  standing between the hosted site and real test execution.
 - AI chat on the hosted Vercel site — deliberately off, not forgotten (see
-  Step 8). Turning it on later just means adding a funded
+  Phase 2 Step 8). Turning it on later just means adding a funded
   `ANTHROPIC_API_KEY` back to Vercel; no code changes needed, the gate reads
   live off `process.env.VERCEL` with no separate feature flag to flip.
+- Test *execution* on the hosted site — off for a different reason than chat:
+  Vercel's serverless functions have neither the Chromium binary nor a
+  process that survives past the response. `run_browser_test` already
+  degrades to a clear text-only message there. Local runs are unaffected.
+- The legacy inline-styled UI still hasn't been migrated to Tailwind
+  (Phase 2 Step 1's deliberate deferral). Phase 3 Step 3 added the
+  interaction layer inline styles can't express, which removes most of the
+  urgency without removing the eventual need.
 
 ---
 
@@ -588,7 +875,37 @@ Vercel) was necessary, not just tidy.
 - **Always back up before a schema-changing operation, preview the exact SQL
   before running it, verify data survives after.** Did this before both live
   migrations in Phase 1 — caught the drift/reset risk in Step 2 specifically
-  because the SQL was inspected before it ran, not after.
+  because the SQL was inspected before it ran, not after. Happened a third
+  time in Phase 3 Step 1: Prisma's generated diff for nine String→DateTime
+  column changes was `DROP COLUMN` + `ADD COLUMN NOT NULL`, which discards
+  every value. Three for three — assume the generated migration is
+  destructive until read.
+- **The failure modes worth the most effort are the quiet ones.** A crash
+  gets fixed because it's visible. A pass rate computed from test cases that
+  were merely *written*, a "0%" that actually means "nothing ran", a bug
+  report whose attachments were typed rather than captured — these all render
+  perfectly and are simply wrong. Most of Phase 3 is encoding those
+  distinctions in the schema and the code (`status` null until something
+  runs, `pct()` returning null, `verify_fix` refusing to say "fixed" without
+  a prior failure) rather than trusting a prompt instruction to hold.
+- **A prompt instruction is not an enforcement mechanism.** Asking the model
+  for all 19 IEEE 829 sections did not reliably produce them; having
+  `save_document` reject the document and name the missing headings did.
+  Where the output shape actually matters, validate it in the tool.
+- **Two independently correct features can be wrong together.** The 45-minute
+  background test ceiling and the 1-hour guest TTL were each fine; together
+  they let a project be deleted mid-run. Neither code review of one feature
+  would have found it — it only appears when you ask what the *new* feature
+  invalidates about an old one.
+- **Tests that were never seen to fail prove nothing.** Every invariant test
+  in Phase 3 Step 2 was mutation-checked — invert the rule, confirm that
+  exact test fails. Cheap, and the only evidence a green suite is
+  load-bearing.
+- **A gitignored generated artifact only works on the machine that generated
+  it.** The Prisma client lived in a gitignored directory and the build never
+  regenerated it; every local build passed for weeks because the folder was
+  already there. Fresh-checkout behavior has to be tested by actually
+  deleting the artifact.
 - **Test end-to-end after every step, not just type-check.** Every step in
   both phases was verified with real `curl` calls exercising the actual
   behavior (signup/login/session flows, cross-user isolation, rate limits,
@@ -613,16 +930,33 @@ Vercel) was necessary, not just tidy.
 ## Known state as of this session's end
 
 - **Deployed and live on Vercel**: `https://qa-agent-alpha.vercel.app`.
-  Everything works on the hosted site except AI chat, which is deliberately
-  disabled there to keep the project at $0 (see Phase 2 Step 8) — auth,
+  Everything works on the hosted site except AI chat and test execution, both
+  deliberately off there (see Phase 2 Step 8 and the list above) — auth,
   guest mode, project/document management, uploads, exports, and generated
   `.docx`/`.xlsx` files are all live against real Neon Postgres and
-  Cloudflare R2. Chat keeps working normally when run locally.
-- **Committed.** The Vercel-deployment fixes (DOMMatrix, native-binary file
-  tracing, chat-disabled gate) landed in their own commit on top of the
-  earlier Phase 1/2 commits. The Prisma-generated
+  Cloudflare R2. Chat and test runs keep working normally when run locally.
+- **Committed and clean.** Working tree clean at the end of Phase 3, with
+  everything through the document-formats work landed. The Prisma-generated
   `.claude/skills`/`.windsurf/skills`/`.agents/skills`/`skills-lock.json`
-  clutter from Phase 1 Step 1 has since been removed.
+  clutter from Phase 1 Step 1 has since been removed, and `.vscode/` is now
+  ignored (it held a personal editor toggle, not project configuration).
+- **`npm test` is now the fast check**: 47 tests across 6 files, all passing,
+  plus a clean `tsc --noEmit`. Covers the honesty invariants from Phase 3
+  Step 2, document naming/versioning, template validation, and storage key
+  safety. It deliberately does *not* cover the end-to-end flows — those are
+  still the real-request verification passes described throughout, and the
+  suite is a regression net under them, not a replacement.
+- **Test execution is real and recorded** (Phase 3 Step 1): runs, executions,
+  evidence and scripts all persist to Postgres, with evidence in R2 under
+  `runs/<projectId>/<runId>/<execId>/`. Reports distinguish what was written
+  from what actually ran, and report null rather than 0 when nothing has run.
+  Needs a persistent server (Chromium binary + a detached process), so this
+  is local-only for now.
+- **Generated documents are format-driven**: four Test Plan formats and three
+  Test Strategy formats, each with its own required section list, its own
+  `.docx` theme, and validation that rejects a document missing sections.
+  Filenames follow `<Subject>_<Document Type>_v<n>.0_<YYYY-MM-DD>.docx` with
+  automatic version increment.
 - **The app now runs entirely on Postgres (Neon)** — local dev included.
   `data/qa-agent.sqlite` still exists but is completely inert; the original
   pre-auth "Testing FRamwwork" project living in it was *not* migrated and is
