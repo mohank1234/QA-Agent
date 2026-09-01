@@ -17,6 +17,7 @@ const PILL_COLUMNS = new Set([
   "run_status",
   "frequency",
   "is_assumption",
+  "classification",
 ]);
 
 // Timestamps arrive as ISO strings. Raw, they wrap onto two lines and read as
@@ -39,6 +40,15 @@ type PillTone = "pass" | "fail" | "warn" | "info" | "neutral";
 function toneFor(value: string): PillTone {
   const v = value.trim().toLowerCase();
   if (["pass", "passed", "done", "closed", "fixed", "yes"].includes(v)) return "pass";
+  // A failure classification is deliberately two-toned: an assertion failure
+  // and an app error are findings against the application and read as red,
+  // while a script error is our own broken test and reads amber. Colouring
+  // them alike would undo the distinction the column exists to make.
+  // Both the human labels and the raw constants are matched, so the tone
+  // survives whether the value came from the API's label map or straight from
+  // the database.
+  if (["assertion fail", "app error", "assertion_fail", "app_error"].includes(v)) return "fail";
+  if (["script error", "script_error"].includes(v)) return "warn";
   if (["fail", "failed", "critical", "p1", "blocked", "open", "new"].includes(v)) return "fail";
   if (["high", "p2", "partial", "retest", "in progress", "intermittent"].includes(v)) return "warn";
   if (["medium", "p3", "running", "qa testing", "ready for uat", "to do"].includes(v)) return "info";

@@ -52,7 +52,7 @@ export default function SignupPage() {
   }
 
   return (
-    <AuthCard title="Create an account" subtitle="QA Intelligence Agent">
+    <AuthCard title="Create an account" subtitle="QA Assistant">
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <label style={authFieldLabelStyle}>Name (optional)</label>

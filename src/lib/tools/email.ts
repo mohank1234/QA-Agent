@@ -24,7 +24,7 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
     await resend.emails.send({
       from: emailConfig.from,
       to,
-      subject: "Reset your QA Agent password",
+      subject: "Reset your QA Assistant password",
       html: `<p>Someone requested a password reset for this email address.</p>
 <p><a href="${resetUrl}">Click here to reset your password</a>. This link expires in 1 hour.</p>
 <p>If you didn't request this, you can safely ignore this email.</p>`,

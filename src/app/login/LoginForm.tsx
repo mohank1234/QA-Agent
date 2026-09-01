@@ -36,7 +36,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   }
 
   return (
-    <AuthCard title="Sign in" subtitle="QA Intelligence Agent">
+    <AuthCard title="Sign in" subtitle="QA Assistant">
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <label style={authFieldLabelStyle}>Email</label>

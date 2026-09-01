@@ -96,15 +96,30 @@ const TEST_CASE_COLUMNS: ColumnDef[] = [
   { key: "comments", label: "Comments", width: "180px" },
 ];
 
+// Phases 2 and 3 added Cause, Why and Self-healed, which pushed this table past
+// 1,900px — well beyond the panel, so the columns that matter most sat off
+// screen behind a horizontal scroll. Two changes bring it back:
+//
+//   - `actual_result` is dropped. On a pass it is the fixed string "Executed
+//     successfully; all assertions passed."; on a failure it repeats
+//     `error_message`. It never carried information the neighbouring columns
+//     didn't already have.
+//   - The remaining widths are tightened. Long prose cells are clamped by
+//     DataTable and reveal in full on hover, so narrower is not lossier.
+//
+// Order follows the question a reader actually asks: what ran, did it pass,
+// whose fault was it, was it repaired, then the supporting detail.
 const EXECUTION_COLUMNS: ColumnDef[] = [
-  { key: "executed_at", label: "Executed At", width: "170px" },
-  { key: "case_id", label: "Test Case", width: "120px" },
-  { key: "result", label: "Result", width: "80px" },
-  { key: "run_label", label: "Run", width: "170px" },
-  { key: "duration_ms", label: "Duration (ms)", width: "110px" },
-  { key: "evidence", label: "Evidence", width: "230px" },
-  { key: "actual_result", label: "Actual Result", width: "230px" },
-  { key: "error_message", label: "Error", width: "260px" },
+  { key: "executed_at", label: "Executed At", width: "150px" },
+  { key: "case_id", label: "Test Case", width: "105px" },
+  { key: "result", label: "Result", width: "70px" },
+  { key: "classification", label: "Cause", width: "110px" },
+  { key: "classification_reason", label: "Why", width: "200px" },
+  { key: "self_healed", label: "Self-healed", width: "170px" },
+  { key: "error_message", label: "Error", width: "200px" },
+  { key: "evidence", label: "Evidence", width: "165px" },
+  { key: "run_label", label: "Run", width: "120px" },
+  { key: "duration_ms", label: "Duration", width: "85px" },
 ];
 
 const BUG_COLUMNS: ColumnDef[] = [
@@ -581,6 +596,10 @@ export default function Home() {
         <button
           onClick={startNewChat}
           title="New chat"
+          // Without this the accessible name is the concatenation of every
+          // child string — "QAQA AssistantAnalyze · design · execute · report"
+          // — which is what a screen reader announces for the control.
+          aria-label="QA Assistant — start a new chat"
           className="app-nav-item"
           style={{
             display: "flex",
@@ -616,7 +635,7 @@ export default function Home() {
           </div>
           <div style={{ minWidth: 0 }}>
             <h1 style={{ fontSize: 15, fontWeight: 650, letterSpacing: "-0.01em" }}>
-              QA Intelligence Agent
+              QA Assistant
             </h1>
             <p style={{ fontSize: 11.5, color: "var(--app-text-dim)", marginTop: 2 }}>
               Analyze · design · execute · report
@@ -1573,23 +1592,26 @@ function GuestExpiryBanner({ expiresAt }: { expiresAt: string }) {
         justifyContent: "center",
         gap: 10,
         flexWrap: "wrap",
-        padding: "10px 20px",
-        background: "var(--app-danger)",
-        color: "#fff",
+        padding: "9px 20px",
+        background: "var(--app-notice-bg)",
+        borderBottom: "1px solid var(--app-notice-border)",
+        color: "var(--app-notice-text)",
         fontSize: 13,
         fontWeight: 500,
         textAlign: "center",
       }}
     >
       <span>
-        ⚠ You&rsquo;re using QA Agent as a guest — this project and everything in it will be{" "}
+        You&rsquo;re using QA Assistant as a guest — this project and everything in it will be{" "}
         <strong>permanently deleted in {formatCountdown(msRemaining)}</strong>.
       </span>
       <Link
         href="/signup"
+        className="app-nav-item"
         style={{
-          color: "#fff",
-          background: "rgba(255,255,255,0.2)",
+          color: "var(--app-notice-text)",
+          background: "var(--app-notice-action-bg)",
+          border: "1px solid var(--app-notice-border)",
           padding: "3px 10px",
           borderRadius: 6,
           textDecoration: "none",

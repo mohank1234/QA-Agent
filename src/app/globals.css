@@ -48,6 +48,17 @@
   --app-neutral: #52525b;
   --app-neutral-bg: rgba(82, 82, 91, 0.1);
 
+  /* Persistent advisory notice (the guest-expiry bar). Deliberately NOT
+     --app-danger: nothing is broken and no action failed, so full-saturation
+     red spends the strongest colour in the palette on a state the user chose.
+     It also sits on screen for a solid hour, and an alarm that never stops
+     being an alarm just teaches people to ignore red. Amber reads as "worth
+     knowing" without impersonating an error. */
+  --app-notice-bg: #fdf1dc;
+  --app-notice-border: #e8c48a;
+  --app-notice-text: #7c4a0b;
+  --app-notice-action-bg: rgba(124, 74, 11, 0.12);
+
   --app-radius: 8px;
   --app-radius-lg: 12px;
   --app-shadow-sm: 0 1px 2px rgba(16, 16, 24, 0.06);
@@ -86,6 +97,11 @@
     --app-info-bg: rgba(125, 171, 255, 0.15);
     --app-neutral: #a1a1aa;
     --app-neutral-bg: rgba(161, 161, 170, 0.14);
+
+    --app-notice-bg: #2e2413;
+    --app-notice-border: #5c4a24;
+    --app-notice-text: #fcd77f;
+    --app-notice-action-bg: rgba(252, 215, 127, 0.16);
 
     --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --app-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);

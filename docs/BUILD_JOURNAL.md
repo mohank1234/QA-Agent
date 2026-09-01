@@ -1,4 +1,9 @@
-# QA Agent — Build Journal
+# QA Assistant — Build Journal
+
+> Named "QA Agent" for most of the period this journal covers; renamed to
+> QA Assistant later. Historical references below (the `qa-agent-alpha.vercel.app`
+> URL, the `qa-agent.sqlite` file, the npm package name) are left as they were,
+> because they are records of what actually existed at the time.
 
 Personal reference notes on how this app was taken from a local single-user MVP
 to a multi-user, production-track SaaS platform. Written for interview

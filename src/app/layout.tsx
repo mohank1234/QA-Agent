@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "QA Intelligence Agent",
+  title: "QA Assistant",
   description: "Personal QA copilot for requirement analysis, test design, and benchmark generation.",
 };
 
