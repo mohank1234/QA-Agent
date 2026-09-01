@@ -22,6 +22,15 @@ export async function runAgentTurn(
   const stream = query({
     prompt: userMessage,
     options: {
+      // Pinned deliberately. Omitting this resolves the model from whatever the
+      // CLI session defaults to at runtime, which can change under us without a
+      // commit — and this app enforces document structure (save_document rejects
+      // a Test Plan missing any of the 19 IEEE 829 sections), so a quietly
+      // swapped model shows up as validation loops with nothing in the repo to
+      // explain why. Cheaper alternatives are "claude-sonnet-5" and
+      // "claude-haiku-4-5"; measure a real turn's cost before switching, since
+      // the tradeoff is against the structure rules above.
+      model: "claude-opus-5",
       systemPrompt: SYSTEM_PROMPT,
       tools: [],
       mcpServers: { qa: mcpServer },
