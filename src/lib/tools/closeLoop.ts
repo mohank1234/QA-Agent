@@ -70,6 +70,24 @@ export async function draftBugFromExecution(
     };
   }
 
+  // The gate, enforced here rather than only asked for in the system prompt.
+  // A SCRIPT_ERROR means our own locator or syntax was wrong — the application
+  // was never shown to misbehave — and a defect filed from one sends a
+  // developer hunting a bug that does not exist. This project has already
+  // learned that a prompt instruction is not an enforcement mechanism (the
+  // document-structure rules only held once save_document started rejecting);
+  // the same applies here, so the refusal lives in code.
+  //
+  // Executions predating classification have none, and are allowed through:
+  // withholding a real defect because an old row lacks a verdict would be the
+  // worse failure, and those runs were reviewed by hand anyway.
+  if (execution.classification === "SCRIPT_ERROR") {
+    return {
+      ok: false,
+      error: `Execution ${input.executionId} was classified SCRIPT_ERROR, so it cannot be filed as a defect: ${execution.classification_reason ?? "the test script, not the application, is at fault."} Fix the script and re-run it. If the re-run then fails on the application's behaviour, that execution can be filed.`,
+    };
+  }
+
   const testCase = execution.case_id
     ? await getTestCaseByCaseId(projectId, execution.case_id)
     : null;

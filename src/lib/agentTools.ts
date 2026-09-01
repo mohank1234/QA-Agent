@@ -9,6 +9,7 @@ import {
   needsBackgroundRun,
 } from "./tools/executeTests";
 import { draftBugFromExecution, verifyFix } from "./tools/closeLoop";
+import { inspectPage } from "./tools/inspectPage";
 import { buildReportData } from "./tools/reportData";
 import {
   checkAgainstTemplate,
@@ -441,6 +442,43 @@ export function buildProjectTools(
         : {}),
     });
   }
+
+  const inspect_page = tool(
+    "inspect_page",
+    "Look at a real page before writing a browser test against it. Loads the URL in headless Chromium and returns a compact structured snapshot: page title, final URL (flagging redirects), the interactive elements actually present (role, accessible name, data-testid, id, name, input type, placeholder, visible/enabled) each with a ready-to-use Playwright locator, plus form groupings, headings and landmarks. CALL THIS BEFORE AUTHORING ANY BROWSER TEST against a URL you have not already inspected this session, and build your locators from what it returns rather than from what the spec says the page contains — selectors guessed from a document are the single largest cause of first-run failures. Pass authStateId with a saved session name to inspect a page behind a login. Output is capped at the top 150 elements, visible ones first.",
+    {
+      url: z.string().describe("URL to load and inspect"),
+      waitForSelector: z
+        .string()
+        .optional()
+        .describe(
+          "CSS selector to wait for before snapshotting — use when the content you care about renders after load"
+        ),
+      timeoutMs: z
+        .number()
+        .optional()
+        .describe("Max time to allow, default 45000, hard cap 120000"),
+      authStateId: z
+        .string()
+        .optional()
+        .describe(
+          "Name of a session saved by an earlier test (saveSession) — inspect the page as that logged-in user"
+        ),
+    },
+    async ({ url, waitForSelector, timeoutMs, authStateId }) => {
+      try {
+        const snapshot = await inspectPage(projectId, url, {
+          waitForSelector,
+          timeoutMs,
+          authStateId,
+        });
+        return text(snapshot);
+      } catch (err) {
+        logger.error({ err, projectId, url }, "inspect_page failed");
+        return text({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  );
 
   const run_browser_test = tool(
     "run_browser_test",
@@ -1075,6 +1113,7 @@ export function buildProjectTools(
       get_project_stats,
       get_report_data,
       run_readonly_query,
+      inspect_page,
       run_browser_test,
       run_api_test,
       save_test_script,
@@ -1114,6 +1153,7 @@ export const PROJECT_TOOL_NAMES = [
   "mcp__qa__get_project_stats",
   "mcp__qa__get_report_data",
   "mcp__qa__run_readonly_query",
+  "mcp__qa__inspect_page",
   "mcp__qa__run_browser_test",
   "mcp__qa__run_api_test",
   "mcp__qa__save_test_script",

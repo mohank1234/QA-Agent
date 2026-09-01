@@ -896,6 +896,13 @@ export type TestExecutionInput = {
   actualResult?: string;
   errorMessage?: string;
   durationMs?: number;
+  /** PASS | SCRIPT_ERROR | ASSERTION_FAIL | APP_ERROR — see classifyFailure.ts. */
+  classification?: string;
+  classificationReason?: string;
+  /** Set when a failing locator was rewritten and the test retried once. */
+  healed?: boolean;
+  healedFromLocator?: string;
+  healedToLocator?: string;
 };
 
 export async function insertTestExecution(
@@ -913,6 +920,11 @@ export async function insertTestExecution(
       actualResult: e.actualResult ?? null,
       errorMessage: e.errorMessage ?? null,
       durationMs: e.durationMs ?? null,
+      classification: e.classification ?? null,
+      classificationReason: e.classificationReason ?? null,
+      healed: e.healed ?? false,
+      healedFromLocator: e.healedFromLocator ?? null,
+      healedToLocator: e.healedToLocator ?? null,
       executedAt: new Date().toISOString(),
     },
   });
@@ -1008,6 +1020,11 @@ export async function getTestRunStatus(projectId: string, runId: string) {
       passed: e.passed,
       error_message: e.errorMessage,
       duration_ms: e.durationMs,
+      classification: e.classification,
+      classification_reason: e.classificationReason,
+      healed: e.healed,
+      healed_from_locator: e.healedFromLocator,
+      healed_to_locator: e.healedToLocator,
       executed_at: e.executedAt.toISOString(),
       evidence: describeEvidence(e),
     })),
@@ -1050,6 +1067,11 @@ export async function listExecutionHistory(
       actual_result: e.actualResult,
       error_message: e.errorMessage,
       duration_ms: e.durationMs,
+      classification: e.classification,
+      classification_reason: e.classificationReason,
+      healed: e.healed,
+      healed_from_locator: e.healedFromLocator,
+      healed_to_locator: e.healedToLocator,
       executed_at: e.executedAt.toISOString(),
       // Only the artifacts that actually exist, as {label, key} pairs — the
       // same shape BugReport.attachmentsJson stores, so evidence can be
@@ -1093,6 +1115,8 @@ export async function getExecutionEvidence(projectId: string, executionId: strin
       passed: true,
       errorMessage: true,
       actualResult: true,
+      classification: true,
+      classificationReason: true,
       executedAt: true,
       traceKey: true,
       screenshotKey: true,
@@ -1108,6 +1132,8 @@ export async function getExecutionEvidence(projectId: string, executionId: strin
     passed: row.passed,
     error_message: row.errorMessage,
     actual_result: row.actualResult,
+    classification: row.classification,
+    classification_reason: row.classificationReason,
     executed_at: row.executedAt.toISOString(),
     evidence: describeEvidence(row),
   };

@@ -262,6 +262,23 @@ model TestExecution {
   durationMs   Int?     @map("duration_ms")
   executedAt   DateTime @map("executed_at")
 
+  // Whose fault the failure was: PASS | SCRIPT_ERROR | ASSERTION_FAIL |
+  // APP_ERROR. This is what stops a wrong locator being written up as an
+  // application defect — only ASSERTION_FAIL and APP_ERROR may become bugs.
+  // Nullable because executions recorded before this column existed genuinely
+  // have no classification, and backfilling one would be inventing a verdict
+  // for a run nobody observed.
+  classification       String? @map("classification")
+  classificationReason String? @map("classification_reason")
+
+  // Self-healing: when a SCRIPT_ERROR's locator was rewritten from a fresh page
+  // snapshot and the test retried once, this records what changed. The from/to
+  // pair is the point — a healed run that nobody can audit is just a run that
+  // silently changed its own test.
+  healed            Boolean @default(false) @map("healed")
+  healedFromLocator String? @map("healed_from_locator")
+  healedToLocator   String? @map("healed_to_locator")
+
   // Evidence captured during the run and uploaded to R2 under
   // runs/<runId>/<execId>/. These are storage keys, not URLs — the download
   // route resolves and authorizes them per project, exactly like exports and

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { runNodeHarness, RESULT_MARKER, type ScriptResult } from "./scriptRunner";
+import type { RunDiagnostics } from "./classifyFailure";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -33,6 +34,13 @@ export const EVIDENCE_FILES = {
   video: "video.webm",
 } as const;
 
+/**
+ * Classification signals, written into the evidence directory. Deliberately not
+ * one of EVIDENCE_FILES: it is an input to the verdict, not an artifact anyone
+ * downloads, so it is never uploaded to storage.
+ */
+export const DIAGNOSTICS_FILE = "diagnostics.json";
+
 export type EvidenceArtifacts = {
   /** Absolute path to the directory holding whatever was captured. */
   dir: string;
@@ -52,7 +60,13 @@ function buildHarness(
   saveSessionState: boolean
 ): string {
   const navigate = url
-    ? `await page.goto(${JSON.stringify(url)}, { waitUntil: "load", timeout: 30000 });`
+    ? `{
+      const __navResponse = await page.goto(${JSON.stringify(url)}, { waitUntil: "load", timeout: 30000 });
+      // The document's own status, kept apart from subresource statuses: a 5xx
+      // here means the page under test is broken, which is a far stronger
+      // signal than a failing background request.
+      if (__navResponse) mainStatus = __navResponse.status();
+    }`
     : "";
 
   // Everything below runs inside the child process. Paths are injected as JSON
@@ -67,8 +81,16 @@ const VIDEO_DIR = path.join(EVIDENCE_DIR, "video");
 const SESSION_IN = ${sessionStatePath ? JSON.stringify(sessionStatePath) : "null"};
 const SESSION_OUT = ${saveSessionState ? JSON.stringify(path.join(evidenceDir, SESSION_STATE_FILE)) : "null"};
 
+// Tagged at the throw, not sniffed from the message afterwards. This flag is
+// what separates "the app did the wrong thing" from "our locator was wrong",
+// and only the throw site actually knows which it is — a message can say
+// anything. The classifier trusts this over any string pattern.
 function assert(condition, message) {
-  if (!condition) throw new Error(message || "Assertion failed");
+  if (!condition) {
+    const err = new Error(message || "Assertion failed");
+    err.__qaAssertion = true;
+    throw err;
+  }
 }
 
 (async () => {
@@ -78,6 +100,8 @@ function assert(condition, message) {
   const browser = await chromium.launch();
   let passed = false;
   let errorMessage = null;
+  let errorName = null;
+  let failureKind = null;
   let context = null;
   let page = null;
   // Contexts the script opened itself, tracked so they can be closed even if
@@ -91,13 +115,37 @@ function assert(condition, message) {
   // Attached ONLY from the context's "page" event — never also by hand for the
   // first page, which would register two listeners on it and duplicate every
   // one of its lines in the log.
+  // Structured signals for failure classification, collected alongside the
+  // human-readable console log. These answer "whose fault was this?" and are
+  // written out even when the run dies, for the same reason evidence is.
+  const pageErrors = [];
+  const serverErrors = [];
+  let crashed = false;
+  let mainStatus = null;
+
   let tabCount = 0;
   function watch(p, tag) {
     p.on("console", (msg) => {
       consoleLines.push(new Date().toISOString() + " [" + tag + "] [" + msg.type() + "] " + msg.text());
     });
     p.on("pageerror", (err) => {
-      consoleLines.push(new Date().toISOString() + " [" + tag + "] [pageerror] " + (err && err.message ? err.message : String(err)));
+      const m = err && err.message ? err.message : String(err);
+      consoleLines.push(new Date().toISOString() + " [" + tag + "] [pageerror] " + m);
+      // An uncaught exception in the application's own JavaScript is the app
+      // misbehaving, whatever our script was doing at the time.
+      if (pageErrors.length < 10) pageErrors.push(m);
+    });
+    p.on("crash", () => {
+      crashed = true;
+      consoleLines.push(new Date().toISOString() + " [" + tag + "] [crash] page crashed");
+    });
+    p.on("response", (res) => {
+      try {
+        const status = res.status();
+        if (status >= 500 && serverErrors.length < 20) {
+          serverErrors.push({ url: res.url(), status: status });
+        }
+      } catch (e) {}
     });
     p.on("requestfailed", (req) => {
       const f = req.failure();
@@ -162,6 +210,20 @@ ${script}
     passed = true;
   } catch (err) {
     errorMessage = err && err.message ? err.message : String(err);
+    errorName = err && err.name ? err.name : null;
+    // Three-way, in order of certainty: our own assert() tags itself; anything
+    // Playwright throws carries a recognisable name or the "locator.x:" /
+    // "page.x:" prefix its API uses; everything else is a plain script throw.
+    if (err && err.__qaAssertion) {
+      failureKind = "assertion";
+    } else if (
+      errorName === "TimeoutError" ||
+      /^(locator|page|frame|expect|browser|context)\./.test(String(errorMessage))
+    ) {
+      failureKind = "playwright";
+    } else {
+      failureKind = "other";
+    }
     // Screenshot while the page is still open — after context.close() there is
     // nothing left to photograph. Best-effort: if the page already crashed,
     // losing the screenshot must not also lose the test result.
@@ -223,6 +285,25 @@ ${script}
       );
     } catch (e) {}
 
+    // Written to a file rather than returned through the result marker, for the
+    // same reason evidence is: a child that gets killed can still leave behind
+    // what it learned, and a classification built from partial signals beats no
+    // classification at all.
+    try {
+      fs.writeFileSync(
+        path.join(EVIDENCE_DIR, ${JSON.stringify(DIAGNOSTICS_FILE)}),
+        JSON.stringify({
+          failureKind: failureKind,
+          errorName: errorName,
+          mainStatus: mainStatus,
+          serverErrors: serverErrors,
+          pageErrors: pageErrors,
+          crashed: crashed,
+          finalUrl: (() => { try { return page ? page.url() : null; } catch (e) { return null; } })(),
+        })
+      );
+    } catch (e) {}
+
     try {
       await browser.close();
     } catch (e) {}
@@ -237,11 +318,106 @@ ${script}
 `;
 }
 
+/**
+ * VERCEL is set automatically in every Vercel deployment. Serverless functions
+ * there don't have the ~300MB Chromium binary `npx playwright install chromium`
+ * downloads locally (not bundled into the deployment, and wouldn't fit typical
+ * function size limits anyway) — fail with one clear, expected message here
+ * rather than a confusing "executable doesn't exist" error surfacing from deep
+ * inside Playwright once chromium.launch() actually attempts to run. Same
+ * graceful-degrade pattern this app already uses for Selenium/Cypress/etc.
+ *
+ * Shared by every entry point that launches a browser (test execution and page
+ * inspection), so the two can't drift into reporting the same limitation
+ * differently.
+ */
+export function assertBrowserAvailable(): void {
+  if (process.env.VERCEL) {
+    throw new Error(
+      "Real browser test execution isn't available in this hosted environment (no Chromium binary here). I can still generate the Playwright script as text — say so if that's useful — or you can run it locally where this is fully supported."
+    );
+  }
+}
+
+/**
+ * NOT require.resolve("playwright"): under Next.js/Turbopack this server module
+ * is bundled, and Turbopack rewrites require.resolve() of an externalized
+ * package into its own internal placeholder string (looks like
+ * "[externals]/playwright [external] (...)"), not a real filesystem path —
+ * which then fails when handed to a plain `node` child process. Resolving
+ * straight off process.cwd() (the project root) sidesteps the bundler entirely.
+ */
+export async function resolvePlaywrightEntry(): Promise<string> {
+  const playwrightEntry = path.join(process.cwd(), "node_modules", "playwright");
+  try {
+    await fs.access(playwrightEntry);
+  } catch {
+    throw new Error(
+      `Could not find the playwright package at ${playwrightEntry} — run "npm install playwright" in the project root.`
+    );
+  }
+  return playwrightEntry;
+}
+
 export type AutomationResult = ScriptResult & {
   evidence?: EvidenceArtifacts;
   /** Local path to the storageState written by this run, if one was asked for. */
   savedSessionStatePath?: string;
+  /** Signals for classifying whose fault the failure was. */
+  diagnostics?: RunDiagnostics;
 };
+
+/**
+ * Reads what the harness recorded and resolves same-origin-ness, which the
+ * harness deliberately doesn't decide: it records raw response URLs, and the
+ * parent — which knows the URL actually under test — is the only side that can
+ * say whether a 5xx came from the application or from somebody's CDN.
+ */
+async function readDiagnostics(
+  dir: string,
+  targetUrl: string | undefined
+): Promise<RunDiagnostics | undefined> {
+  let parsed: {
+    failureKind?: RunDiagnostics["failureKind"];
+    errorName?: string | null;
+    mainStatus?: number | null;
+    serverErrors?: { url: string; status: number }[];
+    pageErrors?: string[];
+    crashed?: boolean;
+    finalUrl?: string | null;
+  };
+  try {
+    parsed = JSON.parse(await fs.readFile(path.join(dir, DIAGNOSTICS_FILE), "utf8"));
+  } catch {
+    // A child killed before it could write leaves nothing. The classifier
+    // handles absent diagnostics by falling back to the error message.
+    return undefined;
+  }
+
+  let baseOrigin: string | null = null;
+  try {
+    baseOrigin = new URL(targetUrl ?? parsed.finalUrl ?? "").origin;
+  } catch {
+    baseOrigin = null;
+  }
+
+  return {
+    failureKind: parsed.failureKind ?? undefined,
+    errorName: parsed.errorName ?? undefined,
+    mainStatus: typeof parsed.mainStatus === "number" ? parsed.mainStatus : undefined,
+    pageErrors: parsed.pageErrors ?? [],
+    crashed: parsed.crashed === true,
+    serverErrors: (parsed.serverErrors ?? []).map((e) => {
+      let sameOrigin = false;
+      try {
+        sameOrigin = baseOrigin !== null && new URL(e.url).origin === baseOrigin;
+      } catch {
+        sameOrigin = false;
+      }
+      return { url: e.url, status: e.status, sameOrigin };
+    }),
+  };
+}
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -293,37 +469,11 @@ export async function runPlaywrightScript(
     allowLongTimeout?: boolean;
   } = {}
 ): Promise<AutomationResult> {
-  // VERCEL is set automatically in every Vercel deployment. Serverless
-  // functions there don't have the ~300MB Chromium binary
-  // `npx playwright install chromium` downloads locally (not bundled into
-  // the deployment, and wouldn't fit typical function size limits anyway) —
-  // fail with one clear, expected message here rather than a confusing
-  // "executable doesn't exist" error surfacing from deep inside Playwright
-  // once chromium.launch() actually attempts to run. Same graceful-degrade
-  // pattern this app already uses for Selenium/Cypress/etc.
-  if (process.env.VERCEL) {
-    throw new Error(
-      "Real browser test execution isn't available in this hosted environment (no Chromium binary here). I can still generate the Playwright script as text — say so if that's useful — or you can run it locally where this is fully supported."
-    );
-  }
+  assertBrowserAvailable();
 
   const ceiling = options.allowLongTimeout ? MAX_BACKGROUND_TIMEOUT_MS : MAX_INLINE_TIMEOUT_MS;
   const timeoutMs = Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, ceiling);
-  // NOT require.resolve("playwright") here: under Next.js/Turbopack this
-  // server module is bundled, and Turbopack rewrites require.resolve() of an
-  // externalized package into its own internal placeholder string (looks
-  // like "[externals]/playwright [external] (...)"), not a real filesystem
-  // path — which then fails when handed to a plain `node` child process.
-  // Resolving straight off process.cwd() (the project root) sidesteps the
-  // bundler entirely.
-  const playwrightEntry = path.join(process.cwd(), "node_modules", "playwright");
-  try {
-    await fs.access(playwrightEntry);
-  } catch {
-    throw new Error(
-      `Could not find the playwright package at ${playwrightEntry} — run "npm install playwright" in the project root.`
-    );
-  }
+  const playwrightEntry = await resolvePlaywrightEntry();
 
   // Evidence lives outside the harness's own working directory, which
   // runNodeHarness deletes as soon as the child exits.
@@ -343,10 +493,11 @@ export async function runPlaywrightScript(
       timeoutMs
     );
     const evidence = await collectEvidence(evidenceDir, result.passed);
+    const diagnostics = await readDiagnostics(evidenceDir, options.url);
     const sessionOut = path.join(evidenceDir, SESSION_STATE_FILE);
     const savedSessionStatePath =
       options.saveSessionState && (await exists(sessionOut)) ? sessionOut : undefined;
-    return { ...result, evidence, savedSessionStatePath };
+    return { ...result, evidence, savedSessionStatePath, diagnostics };
   } catch (err) {
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
     throw err;

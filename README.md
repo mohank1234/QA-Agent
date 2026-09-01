@@ -1,4 +1,4 @@
-# QA Agent
+# QA Assistant
 
 A personal, general-purpose QA copilot. Point it at any project's requirements
 documents (BRD/PRD/specs/API docs/etc.) and it analyzes them, generates
@@ -80,7 +80,11 @@ Next.js, Prisma + Postgres (Neon), Cloudflare R2, and Playwright.
 | Test Plan, Test Strategy, and all Reports (Daily Status, Test Execution, Defect Summary, Release Readiness, etc.) | Generated from live computed stats (`get_project_stats` / `get_report_data`), not estimated — saved as real `.docx` files in the Documents tab, not pasted into chat |
 | Test Execution / Regression / Release Readiness figures | Computed from **real recorded test runs**, not from how many test cases were written. Design counts and execution counts are kept separate, and a project with nothing executed is reported as such rather than given a pass rate |
 | Database validation | **Really executes** read-only (SELECT-only) queries when `DB_ENGINE`/`DATABASE_URL` are configured; generates SQL as text otherwise |
+| Page inspection before authoring a test | **Really loads the page** in headless Chromium (`inspect_page`) and returns the interactive elements actually present — role, accessible name, test ID, a suggested Playwright locator each — plus forms, headings and landmarks. The agent is required to inspect before writing a browser test, so locators come from the real DOM rather than from spec prose. Capped at the top 150 elements, visible first |
 | Playwright browser tests | **Really executes** in a real headless Chromium child process, reports the actual pass/fail, and **persists every run** (`TestRun`/`TestExecution`) linked to its test case |
+| Failure classification | **Really computed** from structured run signals, not keyword-guessed: every execution is stored as `ASSERTION_FAIL` (app behaved differently than specified), `APP_ERROR` (5xx on the page under test, uncaught page exception, or page crash), or `SCRIPT_ERROR` (our own locator/syntax was wrong). Shown as a Cause column in the Executions tab |
+| Self-healing locators | **Really re-inspects and retries** — a `SCRIPT_ERROR` triggers a fresh page snapshot, the failing locator is rewritten from what's actually on the page, and the test is retried **once**. The substitution (old locator → new) is persisted and shown in the Executions tab, so a healed run is auditable rather than silently self-modifying. Never applied to `ASSERTION_FAIL`/`APP_ERROR`, and capped at one heal per run |
+| Auto-drafted defects | **Gated in code, not just prompted** — `draft_bug_from_execution` refuses any execution classified `SCRIPT_ERROR`, so a broken selector cannot be filed as an application defect. Unattributable failures deliberately classify as `SCRIPT_ERROR` so an unexplained result never becomes an accusation |
 | Test evidence | **Really captured** on browser runs — Playwright trace, console log always; screenshot, video, and network HAR on failure — uploaded to R2 and attachable to bug reports. Attachments can only come from a real run; they cannot be written by hand |
 | Long-running tests (idle/session timeout) | **Really supported** — runs needing more than 3 minutes detach and execute in the background (45-minute ceiling), polled via run status. Requires a persistent server (not serverless) |
 | Multi-tab / multi-session tests | **Really supported** — a test body can open additional tabs sharing the session, or fully isolated contexts, and reuse a saved authenticated session across runs |
@@ -281,6 +285,41 @@ src/
   hard code-level gate.** The agent is told to only call the write tools when
   explicitly asked in the current message; this has been verified in testing
   but is a prompted behavior, not an unbypassable mechanical restriction.
+- **Failure classification is heuristic, and deliberately biased.** It reads
+  structured signals first (an assertion tags itself at the throw; page
+  crashes, uncaught page exceptions and HTTP statuses are captured as they
+  happen) and only falls back to matching the error message when a killed
+  child left no diagnostics behind. Anything it cannot confidently attribute
+  is classified `SCRIPT_ERROR`, which cannot become a defect — so the error it
+  makes is under-reporting a real bug, never inventing one against the
+  application. A same-origin 5xx counts as `APP_ERROR`; a third-party one
+  (an analytics beacon, say) is deliberately ignored.
+- **`inspect_page` snapshots one state of one page.** It is capped at 150
+  interactive elements with visible ones first, so a very large page is
+  truncated (the response says when). Accessible names are computed by
+  approximation rather than the full ARIA specification, and dynamic content
+  that renders after network idle needs an explicit `waitForSelector`.
+- **Self-healing fixes the execution, not the saved script.** A heal rewrites
+  the locator for that one retry; the stored `TestScript` is untouched, so the
+  same failure recurs on the next run until the script is re-saved. The agent
+  is told to do that, but it is a prompted step, not a mechanical one.
+- **Healing only fires when the element is still findable.** The planner maps
+  the failing locator to what it was addressing and looks for that same element
+  in the fresh snapshot across every identifier it carries. If the element is
+  absent, or if several equally plausible candidates match, no heal is proposed
+  and the failure stands — substituting a different element would fabricate a
+  green run, and a missing element may itself be the defect. It also declines
+  when the locator came from a helper or variable rather than appearing
+  literally in the script text, since there is nothing to rewrite in place.
+- **One heal per run.** Deliberate: each attempt costs a page inspection plus a
+  full re-execution, so an unbounded policy would let a single UI change double
+  a large suite's runtime. A suite with several broken locators heals the first
+  and reports the rest honestly.
+- **Classification only exists for runs recorded after it shipped.** Older
+  executions have no verdict, and none was backfilled — inventing one for a
+  run nobody observed would be exactly the kind of fabricated result the rest
+  of this app is built to avoid. `draft_bug_from_execution` therefore still
+  accepts unclassified historical executions.
 
 ## Roadmap (not built)
 

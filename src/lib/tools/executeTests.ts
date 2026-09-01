@@ -10,6 +10,12 @@ import {
   type EvidenceArtifacts,
 } from "./runAutomation";
 import { runApiTestScript } from "./runApiTest";
+import {
+  classifyOutcome,
+  mayBecomeDefect as classificationMayBecomeDefect,
+  type FailureClass,
+  type RunDiagnostics,
+} from "./classifyFailure";
 import type { ScriptResult } from "./scriptRunner";
 import {
   createTestRun,
@@ -19,7 +25,10 @@ import {
   attachEvidenceToExecution,
   type ExecutionEvidenceKeys,
 } from "../db";
-import { runEvidenceKey, sessionStateKey, putObject, getObject } from "../storage";
+import { runEvidenceKey, sessionStateKey, putObject } from "../storage";
+import { materializeSession } from "./sessionState";
+import { inspectPage } from "./inspectPage";
+import { planHeal } from "./selfHeal";
 import { logger } from "../logger";
 
 // The single place a test actually executes AND gets persisted. Both the
@@ -55,6 +64,20 @@ export type ExecutedTest = {
   stderr: string;
   /** Artifacts captured and uploaded for this execution, as {label, key}. */
   evidence: { label: string; key: string }[];
+  /** PASS | SCRIPT_ERROR | ASSERTION_FAIL | APP_ERROR. */
+  classification: FailureClass;
+  /** Why it was classified that way — surfaced to the agent and the UI. */
+  classificationReason: string;
+  /**
+   * Whether this outcome is allowed to become a bug report at all. Returned
+   * explicitly rather than left for the agent to re-derive from the
+   * classification, so the rule travels with the result.
+   */
+  mayBecomeDefect: boolean;
+  /** True when a failing locator was rewritten and the test retried once. */
+  healed: boolean;
+  healedFromLocator?: string;
+  healedToLocator?: string;
 };
 
 export type SuiteResult = {
@@ -90,23 +113,6 @@ function describeOutcome(r: ScriptResult): string {
   return r.error ?? "Test failed.";
 }
 
-// Pulls a stored session down to a local file the harness can hand to
-// Playwright's storageState. Returns null when the session doesn't exist yet —
-// a missing session is a normal first-run state, and the test simply starts
-// logged out rather than failing.
-async function materializeSession(
-  projectId: string,
-  name: string
-): Promise<{ path: string; dir: string } | null> {
-  const body = await getObject(sessionStateKey(projectId, name));
-  if (!body) return null;
-  const dir = path.join(os.tmpdir(), `qa-agent-session-${randomUUID()}`);
-  await fs.mkdir(dir, { recursive: true });
-  const file = path.join(dir, "storage-state.json");
-  await fs.writeFile(file, body);
-  return { path: file, dir };
-}
-
 async function runOne(
   projectId: string,
   test: ExecutableTest,
@@ -116,6 +122,7 @@ async function runOne(
   durationMs: number;
   evidence?: EvidenceArtifacts;
   sessionNote?: string;
+  diagnostics?: RunDiagnostics;
 }> {
   const startedAt = Date.now();
   let session: { path: string; dir: string } | null = null;
@@ -130,7 +137,7 @@ async function runOne(
         }
       }
 
-      const { evidence, savedSessionStatePath, ...result } = await runPlaywrightScript(test.body, {
+      const { evidence, savedSessionStatePath, diagnostics, ...result } = await runPlaywrightScript(test.body, {
         url: test.url,
         timeoutMs: test.timeoutMs,
         sessionStatePath: session?.path,
@@ -148,7 +155,7 @@ async function runOne(
         }
       }
 
-      return { result, durationMs: Date.now() - startedAt, evidence, sessionNote };
+      return { result, durationMs: Date.now() - startedAt, evidence, sessionNote, diagnostics };
     }
 
     const result = await runApiTestScript(test.body, test.timeoutMs, { allowLongTimeout });
@@ -272,14 +279,103 @@ export async function executeAndPersist(
   const results: ExecutedTest[] = [];
   const unmatchedCaseIds: string[] = [];
   const notes: string[] = [];
+  // One heal per run, deliberately. Each attempt costs a page inspection plus a
+  // full re-execution, so an unbounded policy would let one broken UI change
+  // turn a twenty-test suite into forty tests and twenty inspections. Capping
+  // it also makes looping structurally impossible rather than merely discouraged.
+  let healUsed = false;
 
   for (const test of tests) {
-    const { result, durationMs, evidence, sessionNote } = await runOne(
-      projectId,
-      test,
-      opts.allowLongTimeout === true
-    );
-    if (sessionNote) notes.push(`${test.name}: ${sessionNote}`);
+    const first = await runOne(projectId, test, opts.allowLongTimeout === true);
+    if (first.sessionNote) notes.push(`${test.name}: ${first.sessionNote}`);
+
+    let { result, durationMs, evidence, diagnostics } = first;
+
+    let healed = false;
+    let healedFromLocator: string | undefined;
+    let healedToLocator: string | undefined;
+
+    // Classified here, in the one path every execution goes through, so an
+    // ad-hoc run and a suite run can never disagree about whose fault a
+    // failure was — the same reason this module exists at all.
+    let { classification, reason: classificationReason } = classifyOutcome({
+      passed: result.passed,
+      timedOut: result.timedOut,
+      error: result.error,
+      diagnostics,
+    });
+
+    // Self-heal, only ever for SCRIPT_ERROR. An ASSERTION_FAIL or APP_ERROR is a
+    // real result about the application, and retrying it would be re-rolling
+    // dice until the answer is convenient.
+    if (
+      classification === "SCRIPT_ERROR" &&
+      !healUsed &&
+      test.testType === "browser" &&
+      test.url
+    ) {
+      healUsed = true;
+      try {
+        const snapshot = await inspectPage(projectId, test.url, {
+          authStateId: test.useSession,
+        });
+        const plan = planHeal(test.body, result.error, snapshot);
+
+        if (!plan) {
+          notes.push(
+            `${test.name}: locator failed, but the element it targeted isn't on the page — no self-heal was possible, so the failure stands. That absence may itself be the finding.`
+          );
+        } else {
+          // The first attempt's artifacts are superseded by the retry's; drop
+          // them here or they leak a temp directory for the process's lifetime.
+          await discardEvidence(evidence);
+
+          const retry = await runOne(
+            projectId,
+            { ...test, body: plan.healedScript },
+            opts.allowLongTimeout === true
+          );
+
+          // durationMs covers both attempts plus the inspection between them:
+          // the heal really did cost that wall-clock time, and reporting only
+          // the retry would make a healed run look faster than it was.
+          durationMs = durationMs + retry.durationMs;
+          result = retry.result;
+          evidence = retry.evidence;
+          diagnostics = retry.diagnostics;
+
+          ({ classification, reason: classificationReason } = classifyOutcome({
+            passed: result.passed,
+            timedOut: result.timedOut,
+            error: result.error,
+            diagnostics,
+          }));
+
+          healed = true;
+          healedFromLocator = plan.originalLocator;
+          healedToLocator = plan.newLocator;
+          const alsoFixed =
+            plan.additionalRewrites.length > 0
+              ? ` Also remapped in the same pass: ${plan.additionalRewrites
+                  .map((r) => `${r.from} → ${r.to}`)
+                  .join("; ")}.`
+              : "";
+          notes.push(
+            `${test.name}: self-healed — locator ${plan.originalLocator} matched nothing, rewritten to ${plan.newLocator} from a fresh page snapshot (matched on ${plan.matchedOn}) and retried once.${alsoFixed} The result below is the retry's. Update the saved script so the fix survives the next run.`
+          );
+        }
+      } catch (err) {
+        // A failed heal attempt must never lose the original result, which is
+        // real data about a real run.
+        logger.error({ err, projectId, runId, test: test.name }, "self-heal attempt failed");
+        notes.push(
+          `${test.name}: a self-heal was attempted but could not complete (${
+            err instanceof Error ? err.message : String(err)
+          }); the original failure stands.`
+        );
+      }
+    }
+
     const outcome = describeOutcome(result);
 
     const executionId = await insertTestExecution(projectId, {
@@ -289,6 +385,11 @@ export async function executeAndPersist(
       actualResult: outcome,
       errorMessage: result.passed ? undefined : (result.error ?? undefined),
       durationMs,
+      classification,
+      classificationReason,
+      healed,
+      healedFromLocator,
+      healedToLocator,
     });
 
     // Uploaded after the row exists, since the storage key embeds its id.
@@ -318,6 +419,12 @@ export async function executeAndPersist(
       stdout: clip(result.stdout),
       stderr: clip(result.stderr),
       evidence: listed,
+      classification,
+      classificationReason,
+      mayBecomeDefect: classificationMayBecomeDefect(classification),
+      healed,
+      healedFromLocator,
+      healedToLocator,
     });
 
     logger.info(
@@ -328,6 +435,7 @@ export async function executeAndPersist(
         test: test.name,
         caseId: test.caseId,
         passed: result.passed,
+        classification,
         durationMs,
         evidenceCount: listed.length,
       },
