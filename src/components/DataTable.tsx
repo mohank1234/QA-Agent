@@ -20,6 +20,11 @@ const PILL_COLUMNS = new Set([
   "classification",
 ]);
 
+// Columns whose value is code rather than prose — rendered monospaced and
+// never broken mid-token, because the point of showing them is that they can
+// be copied back into a script.
+const CODE_COLUMNS = new Set(["self_healed"]);
+
 // Timestamps arrive as ISO strings. Raw, they wrap onto two lines and read as
 // machine output; a QA sheet wants "when", not a serialization format.
 function formatWhen(value: string): string | null {
@@ -171,7 +176,8 @@ export function DataTable({
                       ? ""
                       : String(value);
                 const showPill = PILL_COLUMNS.has(col.key) && display !== "";
-                const when = !showPill && !links ? formatWhen(display) : null;
+                const isCode = CODE_COLUMNS.has(col.key) && display !== "";
+                const when = !showPill && !links && !isCode ? formatWhen(display) : null;
                 return (
                   <td
                     key={col.key}
@@ -186,7 +192,39 @@ export function DataTable({
                       fontSize: col.key.endsWith("_id") ? 12 : undefined,
                     }}
                   >
-                    {links ? (
+                    {isCode ? (
+                      // Locators are meant to be copied into a script, so they
+                      // must not break mid-token. Normal wrapping splits at the
+                      // hyphen in `promo-code`, producing "promo-" / "code')"
+                      // across two lines — unreadable and unusable. Each side of
+                      // the substitution gets its own non-wrapping line, with
+                      // the untruncated value on hover.
+                      <span
+                        title={display}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
+                          fontFamily: "ui-monospace, monospace",
+                          fontSize: 11.5,
+                        }}
+                      >
+                        {display.split("→").map((part, i) => (
+                          <span
+                            key={i}
+                            style={{
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              color: i === 0 ? "var(--app-text-dim)" : undefined,
+                            }}
+                          >
+                            {i > 0 ? "→ " : ""}
+                            {part.trim()}
+                          </span>
+                        ))}
+                      </span>
+                    ) : links ? (
                       <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {links.map((l) => (
                           <a

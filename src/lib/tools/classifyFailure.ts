@@ -49,7 +49,14 @@ export type RunDiagnostics = {
 
 export type Classification = {
   classification: FailureClass;
-  /** Human-readable justification — shown in the UI and given to the agent. */
+  /**
+   * Why this verdict was reached — shown in the UI and given to the agent.
+   *
+   * Deliberately does NOT quote the underlying error. The error is already
+   * stored on the execution and displayed in its own column, so echoing it
+   * here produced two adjacent cells containing the same sentence with a
+   * prefix. This explains the *classification*; the error carries the detail.
+   */
   reason: string;
 };
 
@@ -132,9 +139,8 @@ export function classifyOutcome(input: {
   if (d.failureKind === "assertion") {
     return {
       classification: "ASSERTION_FAIL",
-      reason: message
-        ? `The application behaved differently than expected: ${message}`
-        : "An assertion failed.",
+      reason:
+        "An assertion failed: the element was found and the application ran, but its state or value did not match what the test expected.",
     };
   }
 
@@ -178,7 +184,8 @@ export function classifyOutcome(input: {
   if (d.failureKind === "other" && message) {
     return {
       classification: "ASSERTION_FAIL",
-      reason: `The test failed with: ${message}`,
+      reason:
+        "The test threw an error of its own rather than a locator failure, so the application was reached and did something unexpected.",
     };
   }
 
@@ -192,9 +199,8 @@ export function classifyOutcome(input: {
 
   return {
     classification: "SCRIPT_ERROR",
-    reason: message
-      ? `Could not confidently attribute this failure (${message}), so it is treated as a script problem rather than a defect.`
-      : "Could not confidently attribute this failure, so it is treated as a script problem rather than a defect.",
+    reason:
+      "Could not confidently attribute this failure, so it is treated as a script problem rather than a defect.",
   };
 }
 

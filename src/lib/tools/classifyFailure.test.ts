@@ -86,7 +86,20 @@ describe("classifyOutcome", () => {
     it("classifies a tagged assertion failure as ASSERTION_FAIL", () => {
       const r = failing({ failureKind: "assertion" }, "expected total 100, got 90");
       expect(r.classification).toBe("ASSERTION_FAIL");
-      expect(r.reason).toContain("expected total 100");
+      expect(r.reason).toMatch(/assertion failed/i);
+    });
+
+    it("does not echo the error message into the reason", () => {
+      // The error is stored on the execution and rendered in its own column,
+      // so quoting it here put the same sentence in two adjacent cells.
+      const message = "expected total 100, got 90";
+      for (const d of [
+        { failureKind: "assertion" as const },
+        { failureKind: "other" as const },
+        undefined,
+      ]) {
+        expect(failing(d, message).reason).not.toContain(message);
+      }
     });
 
     it("uses the tag, not the wording, so an assertion mentioning a locator still counts", () => {

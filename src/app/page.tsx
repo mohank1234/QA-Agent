@@ -311,6 +311,7 @@ export default function Home() {
   // Returns to the New Chat screen. Also reachable by clicking the logo.
   function startNewChat() {
     setSelectedProjectId(null);
+    clearProjectState();
     setActiveTab("chat");
     setChatInput("");
     setError(null);
@@ -319,7 +320,26 @@ export default function Home() {
     requestAnimationFrame(() => newProjectInputRef.current?.focus());
   }
 
-  async function refreshArtifacts(projectId: string) {
+  // Clears everything scoped to a project. Called wherever the selection is
+  // dropped, rather than from an effect watching for null: an effect that
+  // synchronously sets seven pieces of state fires a second render pass every
+  // time, and the clearing genuinely belongs to the action that deselects.
+  function clearProjectState() {
+    setMessages([]);
+    setDocuments([]);
+    setRequirements([]);
+    setTestScenarios([]);
+    setTestCases([]);
+    setExecutions([]);
+    setBugReports([]);
+    setBenchmarkRows([]);
+    setGeneratedDocuments([]);
+  }
+
+  // `isStale` lets a caller abandon a response that arrived after the user
+  // moved on — without it, a slow load for the previous project overwrites the
+  // current one's data.
+  async function refreshArtifacts(projectId: string, isStale: () => boolean = () => false) {
     const [reqRes, scnRes, tcRes, execRes, bugRes, benchRes, docRes] = await Promise.all([
       fetch(`/api/requirements?projectId=${projectId}`),
       fetch(`/api/test-scenarios?projectId=${projectId}`),
@@ -338,6 +358,7 @@ export default function Home() {
       benchRes.json(),
       docRes.json(),
     ]);
+    if (isStale()) return;
     setRequirements(reqData.requirements ?? []);
     setTestScenarios(scnData.testScenarios ?? []);
     setTestCases(tcData.testCases ?? []);
@@ -349,20 +370,44 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedProjectId) return;
-    fetch(`/api/chat?projectId=${selectedProjectId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setMessages(data.messages ?? []);
-        setChatDisabled(!!data.chatDisabled);
-      })
-      .catch(() => setError("Could not reach the server to load chat history."));
-    fetch(`/api/documents?projectId=${selectedProjectId}`)
-      .then((r) => r.json())
-      .then((data) => setDocuments(data.documents ?? []))
-      .catch(() => setError("Could not reach the server to load documents."));
-    refreshArtifacts(selectedProjectId).catch(() =>
-      setError("Could not reach the server to load requirements/test cases/bugs/benchmark rows.")
-    );
+
+    // Guarded against the switch-projects race: clicking A then B fires two
+    // overlapping loads, and if A's response lands second it overwrites B's
+    // data with the wrong project's. The flag makes every late response a
+    // no-op, and doubles as the reason none of these setState calls can run
+    // synchronously during the effect.
+    let cancelled = false;
+    const projectId = selectedProjectId;
+
+    void (async () => {
+      try {
+        const [chatRes, docsRes] = await Promise.all([
+          fetch(`/api/chat?projectId=${projectId}`),
+          fetch(`/api/documents?projectId=${projectId}`),
+        ]);
+        const [chatData, docsData] = await Promise.all([chatRes.json(), docsRes.json()]);
+        if (cancelled) return;
+        setMessages(chatData.messages ?? []);
+        setChatDisabled(!!chatData.chatDisabled);
+        setDocuments(docsData.documents ?? []);
+      } catch {
+        if (!cancelled) setError("Could not reach the server to load this project.");
+      }
+    })();
+
+    void (async () => {
+      try {
+        await refreshArtifacts(projectId, () => cancelled);
+      } catch {
+        if (!cancelled) {
+          setError("Could not reach the server to load requirements/test cases/bugs/benchmark rows.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProjectId]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
@@ -379,17 +424,6 @@ export default function Home() {
   const showEmptyChat =
     !!selectedProjectId && messages.length === 0 && !showWelcome && activeTab === "chat";
 
-  useEffect(() => {
-    if (!selectedProjectId) {
-      setMessages([]);
-      setDocuments([]);
-      setRequirements([]);
-      setTestCases([]);
-      setBugReports([]);
-      setBenchmarkRows([]);
-      setGeneratedDocuments([]);
-    }
-  }, [selectedProjectId]);
 
   useEffect(() => {
     if (activeTab === "chat") {
@@ -515,7 +549,11 @@ export default function Home() {
       const remaining = projects.filter((p) => p.id !== project.id);
       setProjects(remaining);
       if (selectedProjectId === project.id) {
-        setSelectedProjectId(remaining[0]?.id ?? null);
+        const next = remaining[0]?.id ?? null;
+        setSelectedProjectId(next);
+        // Deleting the open project leaves its rows on screen until the next
+        // load resolves — or forever, if nothing is selected afterwards.
+        clearProjectState();
       }
     } catch {
       setError("Could not reach the server to delete the project.");
@@ -693,7 +731,10 @@ export default function Home() {
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {projects.length === 0 && (
               <span style={{ fontSize: 13, color: "var(--app-text-dim)" }}>
-                No projects yet — create one below.
+                {/* "below" was only true while the sidebar's own create input
+                    was visible; on the New Chat screen it now points at the
+                    main panel instead of at nothing. */}
+                {selectedProjectId ? "No projects yet — create one below." : "No projects yet."}
               </span>
             )}
             {projects.map((p) => {
@@ -753,25 +794,33 @@ export default function Home() {
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-            <input
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
-              placeholder="New project name"
-              className="app-input"
-              style={{ flex: 1, minWidth: 0, padding: "7px 10px", fontSize: 13 }}
-            />
-            <button
-              onClick={handleCreateProject}
-              className="app-btn app-btn-primary"
-              title="Create project"
-              aria-label="Create project"
-              style={{ padding: "7px 12px", fontSize: 15, lineHeight: 1 }}
-            >
-              +
-            </button>
-          </div>
+          {/* Hidden on the New Chat screen, which already offers a larger,
+              auto-focused version of exactly this control in the main panel.
+              Showing both put two competing affordances for one action on
+              screen at once, and left it ambiguous which one "Create" belonged
+              to. Kept while a project is open, where it's the only way to
+              start another without navigating away. */}
+          {selectedProjectId && (
+            <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+              <input
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+                placeholder="New project name"
+                className="app-input"
+                style={{ flex: 1, minWidth: 0, padding: "7px 10px", fontSize: 13 }}
+              />
+              <button
+                onClick={handleCreateProject}
+                className="app-btn app-btn-primary"
+                title="Create project"
+                aria-label="Create project"
+                style={{ padding: "7px 12px", fontSize: 15, lineHeight: 1 }}
+              >
+                +
+              </button>
+            </div>
+          )}
         </div>
 
         {selectedProjectId && (
