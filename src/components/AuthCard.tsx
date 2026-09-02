@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export function AuthCard({
   title,
   subtitle,
@@ -12,6 +14,7 @@ export function AuthCard({
       style={{
         minHeight: "100vh",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         background: "var(--app-bg)",
@@ -19,6 +22,25 @@ export function AuthCard({
         padding: 24,
       }}
     >
+      <div style={{ width: "100%", maxWidth: 380, marginBottom: 12 }}>
+        {/* Every screen this card wraps (sign in, sign up, forgot/reset
+            password) is otherwise a dead end for anyone who landed here
+            without meaning to stay — there was no way back to the app except
+            the browser's own Back button. */}
+        <Link
+          href="/"
+          className="app-link"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 13,
+            color: "var(--app-text-dim)",
+          }}
+        >
+          <span aria-hidden>←</span> Back to QA Assistant
+        </Link>
+      </div>
       <div
         style={{
           width: "100%",

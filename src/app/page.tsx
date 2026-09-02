@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
-import { DataTable, type ColumnDef } from "@/components/DataTable";
+import { DataTable, EmptyState, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
   id: string;
@@ -271,6 +271,9 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const newProjectInputRef = useRef<HTMLInputElement>(null);
+  // Mirrors selectedProjectId for code that needs the *current* value inside
+  // a callback whose own closure captured an older one — see sendMessage.
+  const selectedProjectIdRef = useRef<string | null>(null);
   const [formatPickerFor, setFormatPickerFor] = useState<"test_plan" | "test_strategy" | null>(null);
   const [documentFormats, setDocumentFormats] = useState<DocumentFormat[]>([]);
 
@@ -367,6 +370,14 @@ export default function Home() {
     setBenchmarkRows(benchData.benchmarkRows ?? []);
     setGeneratedDocuments(docData.documents ?? []);
   }
+
+  // Kept in sync on every render this state changes. sendMessage is an async
+  // function that keeps running after the user may have switched projects;
+  // reading this ref when its fetch resolves is how it tells "still the
+  // project I was sent for" from "the user has since moved on."
+  useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId) return;
@@ -500,34 +511,46 @@ export default function Home() {
 
   async function sendMessage(message: string) {
     if (!message || !selectedProjectId || sending) return;
+    // Captured once, up front: a chat turn can take a couple of minutes (it's
+    // a real agent run), long enough that the user may switch to a different
+    // project before this resolves. Every setState below that would touch
+    // project-scoped data is checked against the *current* selection via the
+    // ref — a stale response must not overwrite whatever the user is looking
+    // at now. `sending` itself is deliberately NOT guarded: it belongs to the
+    // Send button of whichever project is open when the request settles, and
+    // never resetting it would leave that button permanently disabled.
+    const projectId = selectedProjectId;
+    const isCurrentProject = () => selectedProjectIdRef.current === projectId;
     setChatInput("");
     setError(null);
-    setWelcomeDismissed((w) => ({ ...w, [selectedProjectId]: true }));
+    setWelcomeDismissed((w) => ({ ...w, [projectId]: true }));
     setMessages((m) => [...m, { role: "user", content: message, created_at: new Date().toISOString() }]);
     setSending(true);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: selectedProjectId, message }),
+        body: JSON.stringify({ projectId, message }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Something went wrong.");
+        if (isCurrentProject()) setError(data.error ?? "Something went wrong.");
         return;
       }
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content: data.reply,
-          created_at: new Date().toISOString(),
-          documents: data.documents ?? [],
-        },
-      ]);
-      refreshArtifacts(selectedProjectId).catch(() => {});
+      if (isCurrentProject()) {
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: data.reply,
+            created_at: new Date().toISOString(),
+            documents: data.documents ?? [],
+          },
+        ]);
+        refreshArtifacts(projectId).catch(() => {});
+      }
     } catch {
-      setError("Could not reach the server to send the message.");
+      if (isCurrentProject()) setError("Could not reach the server to send the message.");
     } finally {
       setSending(false);
     }
@@ -1133,36 +1156,65 @@ export default function Home() {
             {activeTab !== "chat" && (
               <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
                 {activeTab === "requirements" && (
-                  <DataTable columns={REQUIREMENT_COLUMNS} rows={requirements} emptyLabel="No requirements saved yet." />
+                  <DataTable
+                    columns={REQUIREMENT_COLUMNS}
+                    rows={requirements}
+                    emptyLabel="No requirements saved yet."
+                    emptyIcon="📝"
+                    onGoToChat={() => setActiveTab("chat")}
+                  />
                 )}
                 {activeTab === "test_scenarios" && (
                   <DataTable
                     columns={TEST_SCENARIO_COLUMNS}
                     rows={testScenarios}
                     emptyLabel="No test scenarios saved yet."
+                    emptyIcon="🔀"
+                    onGoToChat={() => setActiveTab("chat")}
                   />
                 )}
                 {activeTab === "test_cases" && (
-                  <DataTable columns={TEST_CASE_COLUMNS} rows={testCases} emptyLabel="No test cases saved yet." />
+                  <DataTable
+                    columns={TEST_CASE_COLUMNS}
+                    rows={testCases}
+                    emptyLabel="No test cases saved yet."
+                    emptyIcon="🧪"
+                    onGoToChat={() => setActiveTab("chat")}
+                  />
                 )}
                 {activeTab === "executions" && (
                   <DataTable
                     columns={EXECUTION_COLUMNS}
                     rows={executions}
                     emptyLabel="No tests have been executed yet."
+                    emptyIcon="▶️"
+                    onGoToChat={() => setActiveTab("chat")}
                   />
                 )}
                 {activeTab === "bug_reports" && (
-                  <DataTable columns={BUG_COLUMNS} rows={bugReports} emptyLabel="No bugs logged yet." />
+                  <DataTable
+                    columns={BUG_COLUMNS}
+                    rows={bugReports}
+                    emptyLabel="No bugs logged yet."
+                    emptyIcon="🐞"
+                    onGoToChat={() => setActiveTab("chat")}
+                  />
                 )}
                 {activeTab === "benchmark" && (
-                  <DataTable columns={BENCHMARK_COLUMNS} rows={benchmarkRows} emptyLabel="No benchmark rows saved yet." />
+                  <DataTable
+                    columns={BENCHMARK_COLUMNS}
+                    rows={benchmarkRows}
+                    emptyLabel="No benchmark rows saved yet."
+                    emptyIcon="🎯"
+                    onGoToChat={() => setActiveTab("chat")}
+                  />
                 )}
                 {activeTab === "generated_documents" && (
                   <GeneratedDocumentsList
                     documents={generatedDocuments}
                     projectId={selectedProjectId!}
                     onPreview={openGeneratedDocPreview}
+                    onGoToChat={() => setActiveTab("chat")}
                   />
                 )}
               </div>
@@ -1678,17 +1730,21 @@ function GeneratedDocumentsList({
   documents,
   projectId,
   onPreview,
+  onGoToChat,
 }: {
   documents: GeneratedDocument[];
   projectId: string;
   onPreview: (doc: GeneratedDocument) => void;
+  onGoToChat?: () => void;
 }) {
   if (documents.length === 0) {
     return (
-      <div style={{ padding: 40, textAlign: "center", color: "var(--app-text-dim)" }}>
-        No documents generated yet. Ask for a Test Plan, Test Strategy, or a report and it will
-        show up here as a real, downloadable Word document.
-      </div>
+      <EmptyState
+        icon="📄"
+        title="No documents generated yet."
+        hint="Ask for a Test Plan, Test Strategy, or a report and it will show up here as a real, downloadable Word document."
+        onGoToChat={onGoToChat}
+      />
     );
   }
 

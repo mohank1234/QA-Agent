@@ -64,6 +64,70 @@ function Pill({ value }: { value: string }) {
   return <span className={`app-pill app-pill-${toneFor(value)}`}>{value}</span>;
 }
 
+// Shared empty-state treatment for every tab that can be empty — the data
+// tables here and, in page.tsx, the Documents list, which used to render its
+// own plain, top-aligned paragraph instead of this. One look, and a real
+// next step: the icon reflects what the tab actually holds (rather than the
+// same dashed diamond everywhere), and the button below the hint text turns
+// "come back once the agent has produced something" into a single click
+// instead of dead space to stare at.
+export function EmptyState({
+  icon,
+  title,
+  hint,
+  onGoToChat,
+}: {
+  icon: string;
+  title: string;
+  hint?: string;
+  onGoToChat?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        padding: 40,
+        textAlign: "center",
+        color: "var(--app-text-dim)",
+      }}
+    >
+      <div
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 12,
+          display: "grid",
+          placeItems: "center",
+          background: "var(--app-surface)",
+          border: "1px dashed var(--app-border-strong)",
+          fontSize: 20,
+        }}
+        aria-hidden
+      >
+        {icon}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--app-text)" }}>{title}</div>
+      <div style={{ fontSize: 12.5, maxWidth: 340 }}>
+        {hint ?? "Ask the agent in the Chat tab and anything it saves will appear here."}
+      </div>
+      {onGoToChat && (
+        <button
+          onClick={onGoToChat}
+          className="app-btn app-btn-primary"
+          style={{ marginTop: 4, padding: "7px 16px", fontSize: 13 }}
+        >
+          Open Chat →
+        </button>
+      )}
+    </div>
+  );
+}
+
 // A cell whose value is a list of {label, url} renders as links rather than
 // String()'d into "[object Object]" — used by the evidence/attachment columns,
 // where the whole point is being able to open the artifact.
@@ -83,47 +147,22 @@ export function DataTable({
   columns,
   rows,
   emptyLabel,
+  emptyIcon = "◇",
+  onGoToChat,
 }: {
   columns: ColumnDef[];
   rows: Record<string, unknown>[];
   emptyLabel: string;
+  /** Reflects what this particular tab holds — the same dashed diamond on
+   * every tab reads as generic rather than as "this one specifically has
+   * nothing yet." */
+  emptyIcon?: string;
+  /** Jumps to the Chat tab, where producing the missing data actually
+   * happens. Omit only for a table with no such tab to send someone to. */
+  onGoToChat?: () => void;
 }) {
   if (rows.length === 0) {
-    return (
-      <div
-        style={{
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 10,
-          padding: 40,
-          textAlign: "center",
-          color: "var(--app-text-dim)",
-        }}
-      >
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            display: "grid",
-            placeItems: "center",
-            background: "var(--app-surface)",
-            border: "1px dashed var(--app-border-strong)",
-            fontSize: 20,
-          }}
-          aria-hidden
-        >
-          ◇
-        </div>
-        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--app-text)" }}>{emptyLabel}</div>
-        <div style={{ fontSize: 12.5, maxWidth: 340 }}>
-          Ask the agent in the Chat tab and anything it saves will appear here.
-        </div>
-      </div>
-    );
+    return <EmptyState icon={emptyIcon} title={emptyLabel} onGoToChat={onGoToChat} />;
   }
 
   return (
