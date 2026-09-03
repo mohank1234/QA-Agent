@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { DataTable, EmptyState, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
@@ -1921,6 +1923,132 @@ function DocumentPreviewModal({
   );
 }
 
+// Chat replies are written in real markdown — headers, bold, tables, code —
+// per the system prompt's own formatting rules, but the bubble used to dump
+// `message.content` as a raw string. GFM tables in particular came through
+// as literal "| Bug | Verdict |" pipe rows: readable to no one. Styled to
+// track the bubble's own color variables (assistant vs. user) rather than
+// fixed colors, since the same content can render on either background in
+// either theme.
+function markdownComponents(linkColor: string): Components {
+  const mutedBorder = "color-mix(in srgb, currentColor 20%, transparent)";
+  const softFill = "color-mix(in srgb, currentColor 8%, transparent)";
+  return {
+    p: ({ children }) => <p style={{ margin: "0 0 8px 0" }}>{children}</p>,
+    strong: ({ children }) => <strong style={{ fontWeight: 650 }}>{children}</strong>,
+    a: ({ children, href }) => (
+      <a href={href} style={{ color: linkColor, textDecoration: "underline" }}>
+        {children}
+      </a>
+    ),
+    ul: ({ children }) => (
+      <ul style={{ margin: "0 0 8px 0", paddingLeft: 20 }}>{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol style={{ margin: "0 0 8px 0", paddingLeft: 20 }}>{children}</ol>
+    ),
+    li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
+    h1: ({ children }) => (
+      <h1 style={{ fontSize: 16, fontWeight: 650, margin: "10px 0 6px 0" }}>{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 style={{ fontSize: 15, fontWeight: 650, margin: "10px 0 6px 0" }}>{children}</h2>
+    ),
+    h3: ({ children }) => (
+      <h3 style={{ fontSize: 14.5, fontWeight: 650, margin: "8px 0 4px 0" }}>{children}</h3>
+    ),
+    h4: ({ children }) => (
+      <h4 style={{ fontSize: 14, fontWeight: 650, margin: "8px 0 4px 0" }}>{children}</h4>
+    ),
+    hr: () => <hr style={{ border: "none", borderTop: `1px solid ${mutedBorder}`, margin: "10px 0" }} />,
+    blockquote: ({ children }) => (
+      <blockquote
+        style={{
+          margin: "6px 0",
+          paddingLeft: 10,
+          borderLeft: `3px solid ${mutedBorder}`,
+          opacity: 0.85,
+        }}
+      >
+        {children}
+      </blockquote>
+    ),
+    code: ({ children, className }) => {
+      // A fenced block's <code> carries a "language-xxx" className from
+      // remark and is already wrapped in <pre> by the default renderer;
+      // only inline `code` spans need the pill styling here.
+      if (className) {
+        return <code className={className}>{children}</code>;
+      }
+      return (
+        <code
+          style={{
+            background: softFill,
+            borderRadius: 4,
+            padding: "1px 5px",
+            fontSize: 12.5,
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+          }}
+        >
+          {children}
+        </code>
+      );
+    },
+    pre: ({ children }) => (
+      <pre
+        style={{
+          background: softFill,
+          border: `1px solid ${mutedBorder}`,
+          borderRadius: 8,
+          padding: "10px 12px",
+          overflowX: "auto",
+          fontSize: 12.5,
+          lineHeight: 1.5,
+          margin: "6px 0",
+        }}
+      >
+        {children}
+      </pre>
+    ),
+    table: ({ children }) => (
+      <div style={{ overflowX: "auto", margin: "6px 0" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: "100%" }}>
+          {children}
+        </table>
+      </div>
+    ),
+    th: ({ children }) => (
+      <th
+        style={{
+          border: `1px solid ${mutedBorder}`,
+          padding: "6px 10px",
+          textAlign: "left",
+          fontWeight: 650,
+          background: softFill,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td style={{ border: `1px solid ${mutedBorder}`, padding: "6px 10px", verticalAlign: "top" }}>
+        {children}
+      </td>
+    ),
+  };
+}
+
+function MarkdownContent({ content, isUser }: { content: string; isUser: boolean }) {
+  const linkColor = isUser ? "var(--app-bubble-user-text)" : "var(--app-accent)";
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(linkColor)}>
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 function ChatBubble({
   message,
   onPreviewDocument,
@@ -1950,7 +2078,6 @@ function ChatBubble({
           // Asymmetric corner on the speaker's side — the usual visual cue for
           // who said what, so the two sides don't read as identical blocks.
           borderRadius: isUser ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-          whiteSpace: "pre-wrap",
           fontSize: 14,
           lineHeight: 1.55,
           background: isUser ? "var(--app-bubble-user)" : "var(--app-bubble-assistant)",
@@ -1958,7 +2085,7 @@ function ChatBubble({
           boxShadow: "var(--app-shadow-sm)",
         }}
       >
-        {message.content}
+        <MarkdownContent content={message.content} isUser={isUser} />
         {links.length > 0 && (
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
             {links.map((link) => (
