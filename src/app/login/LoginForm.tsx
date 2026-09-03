@@ -6,9 +6,6 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import {
   AuthCard,
-  authInputStyle,
-  authButtonStyle,
-  authSecondaryButtonStyle,
   authErrorStyle,
   authFieldLabelStyle,
   authLinkRowStyle,
@@ -45,7 +42,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="email"
           />
         </div>
@@ -56,12 +53,17 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="current-password"
           />
         </div>
         {error && <div style={authErrorStyle}>{error}</div>}
-        <button type="submit" disabled={submitting} style={{ ...authButtonStyle, opacity: submitting ? 0.6 : 1 }}>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="app-auth-btn-primary"
+          style={{ opacity: submitting ? 0.6 : 1 }}
+        >
           {submitting ? "Signing in…" : "Sign in"}
         </button>
       </form>
@@ -70,7 +72,7 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
         <button
           type="button"
           onClick={() => signIn("google", { callbackUrl: "/" })}
-          style={authSecondaryButtonStyle}
+          className="app-auth-btn-secondary"
         >
           Continue with Google
         </button>

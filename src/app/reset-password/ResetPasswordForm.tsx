@@ -5,8 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   AuthCard,
-  authInputStyle,
-  authButtonStyle,
   authErrorStyle,
   authFieldLabelStyle,
 } from "@/components/AuthCard";
@@ -71,7 +69,7 @@ export function ResetPasswordForm() {
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="new-password"
           />
         </div>
@@ -83,12 +81,17 @@ export function ResetPasswordForm() {
             minLength={8}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="new-password"
           />
         </div>
         {error && <div style={authErrorStyle}>{error}</div>}
-        <button type="submit" disabled={submitting} style={{ ...authButtonStyle, opacity: submitting ? 0.6 : 1 }}>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="app-auth-btn-primary"
+          style={{ opacity: submitting ? 0.6 : 1 }}
+        >
           {submitting ? "Saving…" : "Reset password"}
         </button>
       </form>

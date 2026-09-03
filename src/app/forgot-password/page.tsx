@@ -4,8 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   AuthCard,
-  authInputStyle,
-  authButtonStyle,
   authErrorStyle,
   authFieldLabelStyle,
 } from "@/components/AuthCard";
@@ -53,12 +51,17 @@ export default function ForgotPasswordPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              style={authInputStyle}
+              className="app-auth-input"
               autoComplete="email"
             />
           </div>
           {error && <div style={authErrorStyle}>{error}</div>}
-          <button type="submit" disabled={submitting} style={{ ...authButtonStyle, opacity: submitting ? 0.6 : 1 }}>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="app-auth-btn-primary"
+            style={{ opacity: submitting ? 0.6 : 1 }}
+          >
             {submitting ? "Sending…" : "Send reset link"}
           </button>
         </form>

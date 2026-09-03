@@ -6,8 +6,6 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import {
   AuthCard,
-  authInputStyle,
-  authButtonStyle,
   authErrorStyle,
   authFieldLabelStyle,
 } from "@/components/AuthCard";
@@ -60,7 +58,7 @@ export default function SignupPage() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="name"
           />
         </div>
@@ -71,7 +69,7 @@ export default function SignupPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="email"
           />
         </div>
@@ -83,12 +81,17 @@ export default function SignupPage() {
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={authInputStyle}
+            className="app-auth-input"
             autoComplete="new-password"
           />
         </div>
         {error && <div style={authErrorStyle}>{error}</div>}
-        <button type="submit" disabled={submitting} style={{ ...authButtonStyle, opacity: submitting ? 0.6 : 1 }}>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="app-auth-btn-primary"
+          style={{ opacity: submitting ? 0.6 : 1 }}
+        >
           {submitting ? "Creating account…" : "Create account"}
         </button>
       </form>

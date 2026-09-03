@@ -1,5 +1,11 @@
 import Link from "next/link";
 
+const FEATURES = [
+  { icon: "🔍", text: "Turns a BRD or spec into requirements, test scenarios, and traceable test cases" },
+  { icon: "▶", text: "Runs real Playwright and API tests against your app — not just generated scripts" },
+  { icon: "🐞", text: "Files bug reports from actual failures, evidence attached automatically" },
+];
+
 export function AuthCard({
   title,
   subtitle,
@@ -10,99 +16,95 @@ export function AuthCard({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--app-bg)",
-        color: "var(--app-text)",
-        padding: 24,
-      }}
-    >
-      <div style={{ width: "100%", maxWidth: 380, marginBottom: 12 }}>
-        {/* Every screen this card wraps (sign in, sign up, forgot/reset
-            password) is otherwise a dead end for anyone who landed here
-            without meaning to stay — there was no way back to the app except
-            the browser's own Back button. */}
-        <Link
-          href="/"
-          className="app-link"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 13,
-            color: "var(--app-text-dim)",
-          }}
-        >
-          <span aria-hidden>←</span> Back to QA Assistant
-        </Link>
-      </div>
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 380,
-          background: "var(--app-panel)",
-          border: "1px solid var(--app-border)",
-          borderRadius: 12,
-          padding: 28,
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: 18, fontWeight: 600 }}>{title}</h1>
-          {subtitle && (
-            <p style={{ fontSize: 13, color: "var(--app-text-dim)", marginTop: 4 }}>{subtitle}</p>
-          )}
+    <div className="app-auth-shell">
+      <div className="app-auth-brand">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 9,
+              background: "rgba(255,255,255,0.16)",
+              border: "1px solid rgba(255,255,255,0.28)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            QA
+          </div>
+          <span style={{ fontWeight: 650, fontSize: 15, letterSpacing: "-0.01em" }}>QA Assistant</span>
         </div>
-        {children}
+
+        <div>
+          <h2 style={{ fontSize: 28, fontWeight: 650, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+            Your QA engineer,
+            <br />
+            available around the clock.
+          </h2>
+          <p style={{ fontSize: 14.5, color: "rgba(255,255,255,0.82)", marginTop: 10, maxWidth: 380 }}>
+            Analyze requirements, design tests, execute them for real, and report on what actually happened.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {FEATURES.map((f) => (
+            <div key={f.text} className="app-auth-feature">
+              <span className="app-auth-feature-icon" aria-hidden>
+                {f.icon}
+              </span>
+              <span>{f.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="app-auth-form-side">
+        <div style={{ width: "100%", maxWidth: 380 }}>
+          <Link
+            href="/"
+            className="app-link"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13,
+              color: "var(--app-text-dim)",
+              marginBottom: 28,
+            }}
+          >
+            <span aria-hidden>←</span> Back to QA Assistant
+          </Link>
+
+          <div style={{ marginBottom: 22 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 650, letterSpacing: "-0.01em" }}>{title}</h1>
+            {subtitle && (
+              <p style={{ fontSize: 13.5, color: "var(--app-text-dim)", marginTop: 5 }}>{subtitle}</p>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{children}</div>
+        </div>
       </div>
     </div>
   );
 }
 
-export const authInputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "9px 10px",
-  borderRadius: 8,
-  border: "1px solid var(--app-border)",
-  background: "var(--app-bg)",
-  color: "var(--app-text)",
-  fontSize: 14,
-};
-
-export const authButtonStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 0",
-  borderRadius: 8,
-  border: "none",
-  background: "var(--app-accent)",
-  color: "var(--app-accent-text)",
-  fontSize: 14,
-  cursor: "pointer",
-};
-
-export const authSecondaryButtonStyle: React.CSSProperties = {
-  ...authButtonStyle,
-  background: "transparent",
-  color: "var(--app-text)",
-  border: "1px solid var(--app-border)",
-};
-
 export const authErrorStyle: React.CSSProperties = {
   fontSize: 13,
   color: "var(--app-danger)",
+  background: "var(--app-danger-soft)",
+  borderRadius: 8,
+  padding: "8px 10px",
 };
 
 export const authFieldLabelStyle: React.CSSProperties = {
   fontSize: 13,
+  fontWeight: 500,
   color: "var(--app-text-dim)",
-  marginBottom: 4,
+  marginBottom: 6,
   display: "block",
 };
 

@@ -967,20 +967,21 @@ export default function Home() {
           >
             <div
               style={{
-                width: 56,
-                height: 56,
-                borderRadius: 16,
+                width: 60,
+                height: 60,
+                borderRadius: 18,
                 display: "grid",
                 placeItems: "center",
-                background: "var(--app-accent-soft)",
-                color: "var(--app-accent)",
-                fontSize: 24,
+                background: "linear-gradient(140deg, var(--app-accent), #8b5cf6)",
+                color: "#fff",
+                fontSize: 26,
+                boxShadow: "0 10px 24px -10px rgba(79, 70, 229, 0.55)",
               }}
               aria-hidden
             >
               ◈
             </div>
-            <div style={{ fontSize: 22, fontWeight: 680, color: "var(--app-text)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: 23, fontWeight: 680, color: "var(--app-text)", letterSpacing: "-0.02em" }}>
               Start a new QA workspace
             </div>
             <div style={{ fontSize: 13.5, maxWidth: 400, lineHeight: 1.55 }}>
@@ -1316,20 +1317,21 @@ export default function Home() {
                     >
                       <div
                         style={{
-                          width: 56,
-                          height: 56,
-                          borderRadius: 16,
+                          width: 60,
+                          height: 60,
+                          borderRadius: 18,
                           display: "grid",
                           placeItems: "center",
-                          background: "var(--app-accent-soft)",
-                          color: "var(--app-accent)",
-                          fontSize: 24,
+                          background: "linear-gradient(140deg, var(--app-accent), #8b5cf6)",
+                          color: "#fff",
+                          fontSize: 26,
+                          boxShadow: "0 10px 24px -10px rgba(79, 70, 229, 0.55)",
                         }}
                         aria-hidden
                       >
                         ⬆
                       </div>
-                      <div style={{ fontSize: 17, fontWeight: 650 }}>
+                      <div style={{ fontSize: 18, fontWeight: 650 }}>
                         Start by uploading a document
                       </div>
                       <div
