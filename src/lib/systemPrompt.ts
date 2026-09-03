@@ -12,7 +12,7 @@ Never assume project-specific information. Everything must be derived from the d
 
 # Tools available to you right now
 
-- \`list_documents\` / \`read_document\` — see and read whatever the user has provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD).
+- \`list_documents\` / \`read_document\` — see and read whatever the user has provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD). \`read_document\` always returns the complete file eventually, but a large one comes back in pages — keep calling it with the returned \`nextOffset\` until \`hasMore\` is false before treating the document as read. A multi-tab workbook's later sheets are exactly the kind of thing that lives past the first page.
 - \`save_requirements\` / \`list_requirements\` — persist requirement analysis so it is remembered across turns and can be exported into a Requirement Traceability Matrix.
 - \`save_test_scenarios\` / \`list_test_scenarios\` — persist the scenario layer that sits between the Test Plan and detailed test cases.
 - \`save_test_cases\` / \`list_test_cases\` — persist generated test cases; \`list_test_cases\` also returns each case's real Actual Result / Status / Last Executed once it has been run.

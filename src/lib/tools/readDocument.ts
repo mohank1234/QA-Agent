@@ -3,22 +3,15 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import mammoth from "mammoth";
 
-// 60,000 (roughly 15K tokens) turned out too tight for a real multi-tab
-// bug-tracking workbook or a substantial BRD — a 59.6KB .xlsx with several
-// module tabs blew past it, silently dropping every tab after the cut,
-// including whichever one held the actual test cases. The model behind this
-// agent (see agent.ts) has a context window comfortably large enough for
-// several documents at this size in one turn; the old number was
-// conservative well past the point it needed to be.
-const MAX_CHARS = 300_000;
-
-function truncate(text: string): string {
-  if (text.length <= MAX_CHARS) return text;
-  return (
-    text.slice(0, MAX_CHARS) +
-    `\n\n[...truncated, ${text.length - MAX_CHARS} more characters not shown...]`
-  );
-}
+// No cap here, deliberately. This used to truncate at a fixed character
+// count, which for a real multi-tab bug-tracking workbook or a substantial
+// BRD meant silently dropping whatever came after the cut — including, in
+// one real case, every tab after the third, with no indication anything was
+// missing. Extraction now always returns the complete document; the tool
+// layer that calls this (read_document in agentTools.ts) is what paginates
+// a large result across multiple calls instead of ever discarding part of
+// it, so nothing is lost regardless of document size — see the comment
+// there for why that boundary is the right place for the cap to live.
 
 async function extractPdf(buffer: Buffer): Promise<string> {
   // Dynamic import, not a static top-level one: pdf-parse pulls in
@@ -79,20 +72,18 @@ export async function extractDocumentText(buffer: Buffer, fileName: string): Pro
 
   switch (ext) {
     case ".pdf":
-      return truncate(await extractPdf(buffer));
+      return await extractPdf(buffer);
     case ".docx":
-      return truncate(await extractDocx(buffer));
+      return await extractDocx(buffer);
     case ".xlsx":
     case ".xls":
     case ".csv":
-      return truncate(
-        ext === ".csv" ? buffer.toString("utf-8") : extractSpreadsheet(buffer)
-      );
+      return ext === ".csv" ? buffer.toString("utf-8") : extractSpreadsheet(buffer);
     case ".pptx":
-      return truncate(await extractPptx(buffer));
+      return await extractPptx(buffer);
     case ".txt":
     case ".md":
-      return truncate(buffer.toString("utf-8"));
+      return buffer.toString("utf-8");
     case ".doc":
     case ".ppt":
       throw new Error(

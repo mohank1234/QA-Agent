@@ -91,11 +91,29 @@ export function buildProjectTools(
     }
   );
 
+  // A page's worth of a document handed to one tool call. Extraction itself
+  // is never lossy (readDocument.ts returns the complete text, always) — this
+  // is purely about not putting an unbounded amount of text into one turn's
+  // context alongside the system prompt, the rest of the tool schemas, and
+  // whatever else the turn is doing. Chosen so the large majority of real
+  // BRDs and workbooks come back complete in a single call, and a document
+  // that doesn't fit gets read to completion across a few calls instead of
+  // ever quietly losing the rest of itself.
+  const READ_DOCUMENT_CHUNK_CHARS = 200_000;
+
   const read_document = tool(
     "read_document",
-    "Read and extract the text content of a document previously provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD). Pass the exact file name as returned by list_documents.",
-    { filename: z.string().describe("Exact file name, e.g. 'PRD.pdf'") },
-    async ({ filename }) => {
+    "Read the text content of a document previously provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD). Pass the exact file name as returned by list_documents. Returns the COMPLETE document — nothing is ever silently dropped — but a large one comes back in pages: if the result's `hasMore` is true, call this again with `offset` set to the returned `nextOffset` and keep going until `hasMore` is false. Do not analyze, summarize, or extract requirements/test cases/bugs from a document while `hasMore` is still true — a multi-tab workbook's later sheets, or a long BRD's later sections, are exactly the parts still unread at that point.",
+    {
+      filename: z.string().describe("Exact file name, e.g. 'PRD.pdf'"),
+      offset: z
+        .number()
+        .optional()
+        .describe(
+          "Character offset to resume from — pass the previous call's `nextOffset` when its `hasMore` was true. Omit on the first call for this file."
+        ),
+    },
+    async ({ filename, offset }) => {
       // filename here comes straight from the LLM's tool-call argument, not
       // from an HTTP route already sanitized by path.basename() — this is
       // the actual first line of defense against a poisoned document
@@ -105,8 +123,17 @@ export function buildProjectTools(
       if (!buffer) {
         return text({ error: `File "${filename}" not found.` });
       }
-      const content = await extractDocumentText(buffer, filename);
-      return text(content);
+      const full = await extractDocumentText(buffer, filename);
+      const start = offset ?? 0;
+      const slice = full.slice(start, start + READ_DOCUMENT_CHUNK_CHARS);
+      const nextOffset = start + slice.length;
+      const hasMore = nextOffset < full.length;
+      return text({
+        content: slice,
+        totalChars: full.length,
+        hasMore,
+        ...(hasMore ? { nextOffset } : {}),
+      });
     }
   );
 
