@@ -9,7 +9,13 @@ import { config } from "./config";
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function createPrismaClient(): PrismaClient {
-  const adapter = new PrismaPg({ connectionString: config.database.url });
+  // `pg`'s own default pool max is 10. A single busy chat turn can hold
+  // several connections at once — save_requirements/save_test_cases calls,
+  // execution/evidence writes, a background test-suite run — all while the
+  // project tabs the user is looking at are independently reading the same
+  // database. Raised as cheap headroom against that overlap; unused
+  // capacity here costs nothing.
+  const adapter = new PrismaPg({ connectionString: config.database.url, max: 20 });
   return new PrismaClient({ adapter });
 }
 

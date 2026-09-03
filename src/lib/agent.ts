@@ -38,6 +38,16 @@ export async function runAgentTurn(
       permissionMode: "default",
       resume: project?.session_id ?? undefined,
       cwd: process.cwd(),
+      // The SDK caps how much a single MCP tool result may return before
+      // truncating it, independent of anything read_document itself does —
+      // default is far below the 200K-char pages read_document hands back
+      // (agentTools.ts), so a real multi-tab workbook or long BRD hit that
+      // ceiling before ever reaching the per-document pagination this app
+      // added. `env` REPLACES the subprocess environment rather than
+      // merging with it (per the SDK's own docs), so process.env is spread
+      // first — this subprocess still needs PATH, HOME, and the
+      // `claude login` credentials to run at all.
+      env: { ...process.env, MAX_MCP_OUTPUT_TOKENS: "100000" },
     },
   });
 

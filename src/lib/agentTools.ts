@@ -99,7 +99,19 @@ export function buildProjectTools(
   // BRDs and workbooks come back complete in a single call, and a document
   // that doesn't fit gets read to completion across a few calls instead of
   // ever quietly losing the rest of itself.
-  const READ_DOCUMENT_CHUNK_CHARS = 200_000;
+  //
+  // Deliberately conservative, well under MAX_MCP_OUTPUT_TOKENS
+  // (agent.ts): a page at 200,000 was observed, in a real run, tripping a
+  // *separate* SDK-side "this tool result is too big, spilling it to a
+  // temp file with a preview" behavior — one this agent has no way to
+  // recover from, since it isn't given the built-in Read tool that could
+  // fetch the rest of that file. That failure mode is worse than the one
+  // this pagination exists to prevent: the model gets a few KB and no
+  // signal that anything is missing, rather than a clean hasMore/nextOffset
+  // it can act on. A smaller page means a few more read_document calls for
+  // a large document, which costs a little turn time; a page the SDK
+  // hands over intact every time is what actually guarantees completeness.
+  const READ_DOCUMENT_CHUNK_CHARS = 40_000;
 
   const read_document = tool(
     "read_document",

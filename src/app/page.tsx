@@ -728,18 +728,17 @@ export default function Home() {
           {sessionStatus === "loading" ? (
             <span style={{ color: "var(--app-text-dim)" }}>…</span>
           ) : session?.user ? (
-            <>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {session.user.email ?? session.user.name}
-              </span>
-              <button
-                onClick={() => signOut({ callbackUrl: "/login" })}
-                className="app-btn app-btn-ghost"
-                style={{ padding: "4px 8px", fontSize: 12.5, flexShrink: 0 }}
-              >
-                Sign out
-              </button>
-            </>
+            // Just the action, not the identity: this is a personal local
+            // tool, not a shared workspace where knowing *which* signed-in
+            // user you are matters — the email added width pressure against
+            // "Sign out" for no benefit anyone asked for.
+            <button
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              className="app-btn app-btn-ghost"
+              style={{ width: "100%", padding: "4px 8px", fontSize: 12.5 }}
+            >
+              Sign out
+            </button>
           ) : (
             // Secondary: "New chat" above is the primary action, and two
             // solid buttons stacked would compete rather than guide.

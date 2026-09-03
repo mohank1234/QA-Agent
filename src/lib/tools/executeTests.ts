@@ -223,6 +223,15 @@ const EVIDENCE_UPLOADS: {
  * Uploads whatever was captured and returns the stored keys. Upload failures
  * are logged and skipped rather than thrown: losing a screenshot must never
  * turn a recorded test result into a lost one.
+ *
+ * The up-to-5 artifacts (screenshot, video, console log, HAR, trace) are
+ * independent files with independent keys, so they upload concurrently
+ * rather than one at a time — a failing test used to pay for 5 sequential
+ * round trips to R2 (video in particular is not small) before the result
+ * could even be recorded. `Promise.all` over `.map()` still resolves in
+ * `EVIDENCE_UPLOADS` order regardless of which upload actually finishes
+ * first, so `listed` stays in the same screenshot/video/console/HAR/trace
+ * order it always was.
  */
 async function uploadEvidence(
   projectId: string,
@@ -234,21 +243,29 @@ async function uploadEvidence(
   const listed: { label: string; key: string }[] = [];
   if (!evidence) return { keys, listed };
 
-  for (const spec of EVIDENCE_UPLOADS) {
-    const localPath = evidence[spec.source];
-    if (!localPath) continue;
-    try {
-      const body = await fs.readFile(localPath);
-      const key = runEvidenceKey(projectId, runId, executionId, spec.file);
-      await putObject(key, body, spec.contentType);
-      keys[spec.field] = key;
-      listed.push({ label: spec.label, key });
-    } catch (err) {
-      logger.error(
-        { err, projectId, runId, executionId, artifact: spec.file },
-        "failed to upload test evidence"
-      );
-    }
+  const uploads = await Promise.all(
+    EVIDENCE_UPLOADS.map(async (spec) => {
+      const localPath = evidence[spec.source];
+      if (!localPath) return null;
+      try {
+        const body = await fs.readFile(localPath);
+        const key = runEvidenceKey(projectId, runId, executionId, spec.file);
+        await putObject(key, body, spec.contentType);
+        return { field: spec.field, label: spec.label, key };
+      } catch (err) {
+        logger.error(
+          { err, projectId, runId, executionId, artifact: spec.file },
+          "failed to upload test evidence"
+        );
+        return null;
+      }
+    })
+  );
+
+  for (const uploaded of uploads) {
+    if (!uploaded) continue;
+    keys[uploaded.field] = uploaded.key;
+    listed.push({ label: uploaded.label, key: uploaded.key });
   }
 
   return { keys, listed };
