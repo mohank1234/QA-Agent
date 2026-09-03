@@ -44,7 +44,16 @@ export async function runNodeHarness(
     return await new Promise<ScriptResult>((resolve) => {
       const child = spawn(process.execPath, [scriptPath], {
         cwd: runDir,
-        env: { ...process.env },
+        // Scoped to this one throwaway child process, not the app: an
+        // internal/UAT test target routinely runs on a self-signed or
+        // internally-issued cert, and Node's fetch (used by run_api_test)
+        // rejects that by default with no per-call override the way
+        // Playwright's ignoreHTTPSErrors context option gives the browser
+        // paths. This is the equivalent for the plain-Node path — same
+        // "trust this one test target" intent as a human tester clicking
+        // Advanced → Proceed, contained to a process that exists for the
+        // duration of one test and is discarded after.
+        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
       });
 
       let stdout = "";

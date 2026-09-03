@@ -333,7 +333,16 @@ const NAV_TIMEOUT = ${navTimeoutMs};
   let context = null;
 
   try {
-    context = await browser.newContext(SESSION_IN ? { storageState: SESSION_IN } : {});
+    // Internal/UAT/staging environments routinely run on a self-signed or
+    // internally-issued certificate that no public browser trusts — exactly
+    // the "Your connection is not private" interstitial a human tester
+    // clicks through with Advanced → Proceed. Without this, inspect_page
+    // fails on such a target with a bare cert error and no snapshot at all,
+    // which looks identical to the target being unreachable.
+    context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      ...(SESSION_IN ? { storageState: SESSION_IN } : {}),
+    });
     const page = await context.newPage();
 
     const response = await page.goto(URL, { waitUntil: "load", timeout: NAV_TIMEOUT });

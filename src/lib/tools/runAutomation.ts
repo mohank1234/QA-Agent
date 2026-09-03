@@ -163,6 +163,13 @@ function assert(condition, message) {
       // the parent when the test passes.
       recordHar: { path: path.join(EVIDENCE_DIR, ${JSON.stringify(EVIDENCE_FILES.har)}), content: "embed" },
       recordVideo: { dir: VIDEO_DIR },
+      // Internal/UAT/staging targets routinely run on a self-signed or
+      // internally-issued cert no public browser trusts — the same
+      // "Your connection is not private" interstitial a human tester clicks
+      // through with Advanced → Proceed. Without this, every test against
+      // such a target fails as a bare TLS error before it even reaches the
+      // page, indistinguishable from the target being unreachable.
+      ignoreHTTPSErrors: true,
     };
     if (SESSION_IN) baseOptions.storageState = SESSION_IN;
 
@@ -195,7 +202,7 @@ function assert(condition, message) {
       return p;
     };
     const newContext = async (opts) => {
-      const c = await browser.newContext(opts || {});
+      const c = await browser.newContext({ ignoreHTTPSErrors: true, ...(opts || {}) });
       extraContexts.push(c);
       const n = extraContexts.length;
       let ctxTabs = 0;
