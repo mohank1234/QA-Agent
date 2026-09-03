@@ -3,7 +3,14 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import mammoth from "mammoth";
 
-const MAX_CHARS = 60_000;
+// 60,000 (roughly 15K tokens) turned out too tight for a real multi-tab
+// bug-tracking workbook or a substantial BRD — a 59.6KB .xlsx with several
+// module tabs blew past it, silently dropping every tab after the cut,
+// including whichever one held the actual test cases. The model behind this
+// agent (see agent.ts) has a context window comfortably large enough for
+// several documents at this size in one turn; the old number was
+// conservative well past the point it needed to be.
+const MAX_CHARS = 300_000;
 
 function truncate(text: string): string {
   if (text.length <= MAX_CHARS) return text;

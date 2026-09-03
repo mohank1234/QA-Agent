@@ -17,7 +17,19 @@ const nextConfig: NextConfig = {
   // instead of bundling (needed), but doesn't by itself make Next's output
   // file tracing *copy* the dynamically-resolved binary package into the
   // deployment (separate problem, fixed below).
-  serverExternalPackages: ["@anthropic-ai/claude-agent-sdk"],
+  // pdf-parse (via pdfjs-dist's "legacy" Node build) sets up its text
+  // extraction by dynamically importing its own pdf.worker.mjs as a "fake
+  // worker" running in-process. Bundled by Turbopack/webpack, that dynamic
+  // import resolves against the bundled chunk graph instead of the real
+  // package directory, and pdf.worker.mjs never gets copied into it —
+  // every PDF upload's preview/analysis then fails with "Setting up fake
+  // worker failed: Cannot find module '.../pdf.worker.mjs'". Marking both
+  // packages external makes Next `require()`/`import()` them directly from
+  // node_modules at runtime, where the worker file actually sits next to
+  // the rest of the package. Same root cause as the claude-agent-sdk entry
+  // above: a dependency that resolves part of itself dynamically at
+  // runtime in a way static bundling can't follow.
+  serverExternalPackages: ["@anthropic-ai/claude-agent-sdk", "pdf-parse", "pdfjs-dist"],
 
   // The actual fix for the "never copied into the deployment" half: the SDK
   // picks its native binary package (…-linux-x64, …-linux-arm64, etc.) based
