@@ -239,6 +239,13 @@ const QUICK_ACTIONS: {
   },
 ];
 
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+
+function isImageFilename(name: string): boolean {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
 function downloadLinksFrom(text: string): string[] {
   const matches = [...text.matchAll(/\/api\/(?:exports|generated-documents)\/[^\s")]+/g)];
   return matches.map((m) => m[0]).filter((link) => !link.endsWith("/preview"));
@@ -268,9 +275,11 @@ export default function Home() {
   const [previewFilename, setPreviewFilename] = useState<string | null>(null);
   const [previewDownloadHref, setPreviewDownloadHref] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const newProjectInputRef = useRef<HTMLInputElement>(null);
   // Mirrors selectedProjectId for code that needs the *current* value inside
@@ -591,6 +600,14 @@ export default function Home() {
     setPreviewDownloadHref(downloadHref);
     setPreviewText(null);
     setPreviewError(null);
+    // An image response isn't JSON — the preview route serves it as the raw
+    // file with an image Content-Type, so <img src={previewUrl}> loads it
+    // directly and there's nothing here to fetch/parse first.
+    if (isImageFilename(filename)) {
+      setPreviewImageUrl(previewUrl);
+      setPreviewLoading(false);
+      return;
+    }
     setPreviewLoading(true);
     try {
       const res = await fetch(previewUrl);
@@ -635,6 +652,7 @@ export default function Home() {
     setPreviewFilename(null);
     setPreviewDownloadHref(null);
     setPreviewText(null);
+    setPreviewImageUrl(null);
     setPreviewError(null);
     setPreviewLoading(false);
   }
@@ -907,7 +925,7 @@ export default function Home() {
               type="file"
               multiple
               hidden
-              accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.txt,.md"
+              accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp"
               onChange={(e) => {
                 const files = e.target.files;
                 if (files && files.length > 0) handleUpload(files);
@@ -1354,13 +1372,25 @@ export default function Home() {
                         {uploading ? "Uploading…" : "Upload document(s)"}
                       </button>
                       <div style={{ fontSize: 12, color: "var(--app-text-dim)" }}>
-                        PDF · DOCX · XLSX · CSV · PPTX · TXT · MD
+                        PDF · DOCX · XLSX · CSV · PPTX · TXT · MD · PNG · JPG · GIF · WEBP
                       </div>
                     </div>
                   ) : (
                     <>
                       {messages.map((m, i) => (
-                        <ChatBubble key={i} message={m} onPreviewDocument={openChatDocumentPreview} />
+                        <ChatBubble
+                          key={i}
+                          message={m}
+                          onPreviewDocument={openChatDocumentPreview}
+                          onEdit={
+                            m.role === "user"
+                              ? () => {
+                                  setChatInput(m.content);
+                                  chatInputRef.current?.focus();
+                                }
+                              : undefined
+                          }
+                        />
                       ))}
                       {sending && <WorkingIndicator />}
                     </>
@@ -1382,7 +1412,18 @@ export default function Home() {
                     background: "var(--app-panel)",
                   }}
                 >
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || chatDisabled}
+                    className="app-btn app-btn-ghost"
+                    title="Attach a document or image"
+                    aria-label="Attach a document or image"
+                    style={{ padding: "10px 11px", flexShrink: 0 }}
+                  >
+                    📎
+                  </button>
                   <textarea
+                    ref={chatInputRef}
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -1437,6 +1478,7 @@ export default function Home() {
         <DocumentPreviewModal
           filename={previewFilename}
           text={previewText}
+          imageUrl={previewImageUrl}
           loading={previewLoading}
           error={previewError}
           downloadHref={previewDownloadHref}
@@ -1818,6 +1860,7 @@ function GeneratedDocumentsList({
 function DocumentPreviewModal({
   filename,
   text,
+  imageUrl,
   loading,
   error,
   downloadHref,
@@ -1825,6 +1868,7 @@ function DocumentPreviewModal({
 }: {
   filename: string;
   text: string | null;
+  imageUrl: string | null;
   loading: boolean;
   error: string | null;
   downloadHref: string;
@@ -1851,7 +1895,7 @@ function DocumentPreviewModal({
           borderRadius: 10,
           border: "1px solid var(--app-border)",
           width: "100%",
-          maxWidth: 800,
+          maxWidth: imageUrl ? 1000 : 800,
           maxHeight: "85vh",
           display: "flex",
           flexDirection: "column",
@@ -1901,10 +1945,31 @@ function DocumentPreviewModal({
             </button>
           </div>
         </div>
-        <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
-          {loading && <div style={{ color: "var(--app-text-dim)", fontSize: 13 }}>Loading preview…</div>}
-          {error && <div style={{ color: "var(--app-danger)", fontSize: 13 }}>{error}</div>}
-          {!loading && !error && (
+        <div
+          style={{
+            padding: imageUrl ? 0 : 16,
+            overflow: "auto",
+            flex: 1,
+            display: imageUrl ? "flex" : "block",
+            justifyContent: "center",
+            background: imageUrl ? "var(--app-surface)" : "transparent",
+          }}
+        >
+          {loading && (
+            <div style={{ color: "var(--app-text-dim)", fontSize: 13, padding: 16 }}>Loading preview…</div>
+          )}
+          {error && <div style={{ color: "var(--app-danger)", fontSize: 13, padding: 16 }}>{error}</div>}
+          {!loading && !error && imageUrl && (
+            // A stored upload served from our own API, not something
+            // next/image's remote-origin config needs to know about.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt={filename}
+              style={{ maxWidth: "100%", maxHeight: "calc(85vh - 53px)", display: "block" }}
+            />
+          )}
+          {!loading && !error && !imageUrl && (
             <pre
               style={{
                 whiteSpace: "pre-wrap",
@@ -2054,20 +2119,37 @@ function MarkdownContent({ content, isUser }: { content: string; isUser: boolean
 function ChatBubble({
   message,
   onPreviewDocument,
+  onEdit,
 }: {
   message: Message;
   onPreviewDocument: (doc: ChatDocument) => void;
+  onEdit?: () => void;
 }) {
   const isUser = message.role === "user";
   const links = message.role === "assistant" ? downloadLinksFrom(message.content) : [];
   const documents = message.documents ?? [];
   const linkColor = isUser ? "var(--app-bubble-user-text)" : "var(--app-accent)";
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access can be denied (permissions, insecure context) —
+      // nothing useful to recover into, so just leave "Copy" showing rather
+      // than claim success that didn't happen.
+    }
+  }
 
   return (
     <div
+      className="app-msg-row"
       style={{
         display: "flex",
-        justifyContent: isUser ? "flex-end" : "flex-start",
+        flexDirection: "column",
+        alignItems: isUser ? "flex-end" : "flex-start",
         marginBottom: 12,
       }}
     >
@@ -2126,6 +2208,27 @@ function ChatBubble({
               </div>
             ))}
           </div>
+        )}
+      </div>
+      <div
+        className="app-msg-actions"
+        style={{ display: "flex", gap: 4, marginTop: 4, paddingInline: 4 }}
+      >
+        <button
+          onClick={handleCopy}
+          className="app-btn app-btn-ghost"
+          style={{ padding: "3px 7px", fontSize: 11.5 }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="app-btn app-btn-ghost"
+            style={{ padding: "3px 7px", fontSize: 11.5 }}
+          >
+            Edit
+          </button>
         )}
       </div>
     </div>

@@ -368,6 +368,26 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* Chat message actions (Copy/Edit) -----------------------------------------
+   Hidden until the message is hovered or one of its own buttons has focus —
+   :focus-within keeps a keyboard/screen-reader user's focused button visible
+   even though the mouse never entered the row, rather than an invisible
+   control they've tabbed onto. */
+.app-msg-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.app-msg-row:hover .app-msg-actions,
+.app-msg-actions:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  /* Touch devices have no hover to reveal these on — always show them. */
+  .app-msg-actions {
+    opacity: 1;
+  }
+}
+
 /* Auth shell --------------------------------------------------------------
    Sign in / sign up / forgot / reset password all share this one shell via
    AuthCard.tsx. The brand panel is deliberately theme-invariant (a fixed

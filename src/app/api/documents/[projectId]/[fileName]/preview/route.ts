@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { uploadKey, getObject } from "@/lib/storage";
-import { extractDocumentText } from "@/lib/tools/readDocument";
+import { extractDocumentText, isImageFile, imageMimeType } from "@/lib/tools/readDocument";
 import { requireProjectAccess } from "@/lib/apiAuth";
 
 export async function GET(
@@ -14,6 +14,18 @@ export async function GET(
   const data = await getObject(uploadKey(projectId, fileName));
   if (!data) {
     return NextResponse.json({ error: "File not found." }, { status: 404 });
+  }
+
+  // An image has nothing to extract as text — there's no JSON shape that
+  // makes sense here, so this branch returns the raw bytes directly, with
+  // `inline` (not `attachment`) so <img src="this URL"> just renders it.
+  if (isImageFile(fileName)) {
+    return new NextResponse(new Uint8Array(data), {
+      headers: {
+        "Content-Type": imageMimeType(fileName) ?? "application/octet-stream",
+        "Content-Disposition": "inline",
+      },
+    });
   }
 
   try {

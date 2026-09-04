@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { extractDocumentText } from "./tools/readDocument";
+import { extractDocumentText, isImageFile, imageMimeType } from "./tools/readDocument";
 import { exportProjectArtifact, type ExportKind } from "./tools/exportArtifact";
 import { runReadOnlyQuery, isDbConfigured } from "./tools/dbQuery";
 import {
@@ -115,14 +115,14 @@ export function buildProjectTools(
 
   const read_document = tool(
     "read_document",
-    "Read the text content of a document previously provided for this project (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD). Pass the exact file name as returned by list_documents. Returns the COMPLETE document — nothing is ever silently dropped — but a large one comes back in pages: if the result's `hasMore` is true, call this again with `offset` set to the returned `nextOffset` and keep going until `hasMore` is false. Do not analyze, summarize, or extract requirements/test cases/bugs from a document while `hasMore` is still true — a multi-tab workbook's later sheets, or a long BRD's later sections, are exactly the parts still unread at that point.",
+    "Read a document previously provided for this project — text formats (PDF, DOCX, XLSX/XLS/CSV, PPTX, TXT, MD) or an image (PNG/JPG/GIF/WEBP, e.g. a bug screenshot or a UI mockup). Pass the exact file name as returned by list_documents. For an image, this returns the actual image for you to look at directly — describe/analyze what's really in it rather than guessing from the filename. For text formats, returns the COMPLETE document — nothing is ever silently dropped — but a large one comes back in pages: if the result's `hasMore` is true, call this again with `offset` set to the returned `nextOffset` and keep going until `hasMore` is false. Do not analyze, summarize, or extract requirements/test cases/bugs from a document while `hasMore` is still true — a multi-tab workbook's later sheets, or a long BRD's later sections, are exactly the parts still unread at that point.",
     {
-      filename: z.string().describe("Exact file name, e.g. 'PRD.pdf'"),
+      filename: z.string().describe("Exact file name, e.g. 'PRD.pdf' or 'login-bug.png'"),
       offset: z
         .number()
         .optional()
         .describe(
-          "Character offset to resume from — pass the previous call's `nextOffset` when its `hasMore` was true. Omit on the first call for this file."
+          "Character offset to resume from — pass the previous call's `nextOffset` when its `hasMore` was true. Omit on the first call for this file. Not applicable to images."
         ),
     },
     async ({ filename, offset }) => {
@@ -135,6 +135,17 @@ export function buildProjectTools(
       if (!buffer) {
         return text({ error: `File "${filename}" not found.` });
       }
+
+      if (isImageFile(filename)) {
+        const mimeType = imageMimeType(filename)!;
+        return {
+          content: [
+            { type: "image" as const, data: buffer.toString("base64"), mimeType },
+            { type: "text" as const, text: `Image: ${filename}` },
+          ],
+        };
+      }
+
       const full = await extractDocumentText(buffer, filename);
       const start = offset ?? 0;
       const slice = full.slice(start, start + READ_DOCUMENT_CHUNK_CHARS);

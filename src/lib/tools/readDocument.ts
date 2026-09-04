@@ -3,6 +3,29 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import mammoth from "mammoth";
 
+// Images are a different kind of document entirely: there's no text to
+// extract, and the point of uploading one (a bug screenshot, a UI mockup) is
+// for the model to actually *see* it. Kept separate from extractDocumentText
+// below — a caller checks isImageFile() first and takes the image content
+// block path instead (read_document in agentTools.ts; the document preview
+// route) rather than this module trying to return two different shapes from
+// one function.
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+export function isImageFile(fileName: string): boolean {
+  return path.extname(fileName).toLowerCase() in IMAGE_MIME_TYPES;
+}
+
+export function imageMimeType(fileName: string): string | null {
+  return IMAGE_MIME_TYPES[path.extname(fileName).toLowerCase()] ?? null;
+}
+
 // No cap here, deliberately. This used to truncate at a fixed character
 // count, which for a real multi-tab bug-tracking workbook or a substantial
 // BRD meant silently dropping whatever came after the cut — including, in

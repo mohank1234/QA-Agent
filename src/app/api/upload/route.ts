@@ -14,6 +14,13 @@ const ALLOWED_EXTENSIONS = new Set([
   ".pptx",
   ".txt",
   ".md",
+  // Images: bug screenshots, UI mockups — read_document (agentTools.ts)
+  // hands these to the model as an actual image rather than extracted text.
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
 ]);
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25MB — generous for BRDs/specs, small enough to bound memory abuse
