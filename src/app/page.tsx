@@ -5,6 +5,7 @@ import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Copy, Check, Pencil } from "lucide-react";
 import { DataTable, EmptyState, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
@@ -2217,17 +2218,21 @@ function ChatBubble({
         <button
           onClick={handleCopy}
           className="app-btn app-btn-ghost"
-          style={{ padding: "3px 7px", fontSize: 11.5 }}
+          title={copied ? "Copied" : "Copy"}
+          aria-label={copied ? "Copied" : "Copy"}
+          style={{ padding: 6, display: "flex" }}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
         {onEdit && (
           <button
             onClick={onEdit}
             className="app-btn app-btn-ghost"
-            style={{ padding: "3px 7px", fontSize: 11.5 }}
+            title="Edit"
+            aria-label="Edit"
+            style={{ padding: 6, display: "flex" }}
           >
-            Edit
+            <Pencil size={14} />
           </button>
         )}
       </div>
