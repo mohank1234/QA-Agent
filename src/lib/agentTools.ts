@@ -10,6 +10,8 @@ import {
 } from "./tools/executeTests";
 import { draftBugFromExecution, verifyFix } from "./tools/closeLoop";
 import { inspectPage } from "./tools/inspectPage";
+import { synthesizeSpeech, SUPPORTED_LANGUAGES as TTS_SUPPORTED_LANGUAGES } from "./tools/speechSynth";
+import { wordErrorRate } from "./tools/transcriptCompare";
 import { buildReportData } from "./tools/reportData";
 import {
   checkAgainstTemplate,
@@ -76,7 +78,8 @@ function withEvidenceUrls(evidence: { label: string; key: string }[]) {
 
 export function buildProjectTools(
   projectId: string,
-  onDocumentSaved?: (doc: SavedDocumentInfo) => void
+  onDocumentSaved?: (doc: SavedDocumentInfo) => void,
+  onDocumentValidationFailed?: () => void
 ) {
   const list_documents = tool(
     "list_documents",
@@ -465,7 +468,14 @@ export function buildProjectTools(
   // trail a suite run does and shows up in reports and history identically.
   async function runAdHoc(
     testType: "browser" | "api",
-    test: { name: string; body: string; url?: string; caseId?: string; timeoutMs?: number }
+    test: {
+      name: string;
+      body: string;
+      url?: string;
+      caseId?: string;
+      timeoutMs?: number;
+      audioFile?: string;
+    }
   ) {
     const suite = await executeAndPersist(
       projectId,
@@ -532,7 +542,7 @@ export function buildProjectTools(
 
   const run_browser_test = tool(
     "run_browser_test",
-    "Actually execute a Playwright browser test — not just generate script text — and permanently record the result, with evidence captured automatically. Runs in a real headless Chromium in an isolated child process with a timeout. Your `script` is the test body only (no boilerplate). Available to it: `page` (already navigated to `url` if given), `context`, `browser`, `assert(condition, message)`, plus `await newPage()` to open ANOTHER TAB sharing the same login (for multi-tab and background-tab behaviour — use `await someOtherPage.bringToFront()` to background the first tab), and `await newContext()` for a fully ISOLATED session with separate cookies (for concurrent logins). Throw/assert to fail; complete normally to pass. Pass `caseId` whenever this verifies a saved test case — that links the run to the case and makes it count toward execution stats. Max 3 minutes here; for anything longer (idle/session-timeout tests) use save_test_script with a larger timeoutMs and run it via run_test_suite, which detaches automatically. For Selenium/Cypress/Appium/Pytest (not wired up) keep generating script text as before.",
+    "Actually execute a Playwright browser test — not just generate script text — and permanently record the result, with evidence captured automatically. Runs in a real headless Chromium in an isolated child process with a timeout. Your `script` is the test body only (no boilerplate). Available to it: `page` (already navigated to `url` if given), `context`, `browser`, `assert(condition, message)`, plus `await newPage()` to open ANOTHER TAB sharing the same login (for multi-tab and background-tab behaviour — use `await someOtherPage.bringToFront()` to background the first tab), and `await newContext()` for a fully ISOLATED session with separate cookies (for concurrent logins). Throw/assert to fail; complete normally to pass. Pass `caseId` whenever this verifies a saved test case — that links the run to the case and makes it count toward execution stats. Max 3 minutes here; for anything longer (idle/session-timeout tests) use save_test_script with a larger timeoutMs and run it via run_test_suite, which detaches automatically. For Selenium/Cypress/Appium/Pytest (not wired up) keep generating script text as before. Pass `audioFile` (a path returned by `synthesize_speech`) to make the app under test receive that audio as its microphone input via a real getUserMedia call — for live transcription/translation testing. In the script, request the mic with `echoCancellation: false, noiseSuppression: false, autoGainControl: false` so Chrome's own audio processing doesn't distort the injected signal before the app sees it. One audioFile = one fake mic for this whole browser; simultaneous different-audio participants aren't supported by this tool yet.",
     {
       url: z.string().optional().describe("URL to navigate to before running the script"),
       script: z
@@ -546,8 +556,14 @@ export function buildProjectTools(
         .describe("Test case ID this run verifies, e.g. TC-IDLE-001 — pass it whenever one applies"),
       name: z.string().optional().describe("Short label for this run"),
       timeoutMs: z.number().optional().describe("Max time to allow, default 60000, hard cap 180000"),
+      audioFile: z
+        .string()
+        .optional()
+        .describe(
+          "Local WAV path (from synthesize_speech) to inject as this browser's microphone input, for live speech/transcription/translation testing."
+        ),
     },
-    async ({ url, script, caseId, name, timeoutMs }) => {
+    async ({ url, script, caseId, name, timeoutMs, audioFile }) => {
       try {
         return await runAdHoc("browser", {
           name: name ?? caseId ?? "Ad-hoc browser test",
@@ -555,6 +571,7 @@ export function buildProjectTools(
           url,
           caseId,
           timeoutMs,
+          audioFile,
         });
       } catch (err) {
         logger.error({ err, projectId }, "run_browser_test failed");
@@ -591,6 +608,46 @@ export function buildProjectTools(
         logger.error({ err, projectId }, "run_api_test failed");
         return text({ error: err instanceof Error ? err.message : String(err) });
       }
+    }
+  );
+
+  const synthesize_speech = tool(
+    "synthesize_speech",
+    `Generate real speech audio from known text, for testing live transcription/translation in an app under test. Returns a local WAV file path (pass it as audioFile to run_browser_test to inject it as that browser's microphone) plus the exact text back as the known ground truth — compare a transcript against this with compare_transcript rather than eyeballing whether "some text appeared". Runs locally via Piper, free, no API key. Supported languages right now: ${TTS_SUPPORTED_LANGUAGES.join(", ")}. Tagalog/Filipino (tl) is NOT supported — no free local voice exists for it anywhere in the current open-source TTS ecosystem; say so plainly rather than skipping it silently or substituting another language. First call for a given language downloads and caches its voice model (tens of MB, one-time).`,
+    {
+      text: z.string().describe("The exact sentence(s) to speak — this becomes the known ground truth for comparison"),
+      languageCode: z
+        .string()
+        .describe(`Language to synthesize in, e.g. "en", "ar", "ja". Supported: ${TTS_SUPPORTED_LANGUAGES.join(", ")}.`),
+    },
+    async ({ text: speechText, languageCode }) => {
+      try {
+        const result = await synthesizeSpeech(speechText, languageCode);
+        return text({
+          wavPath: result.wavPath,
+          durationMs: result.durationMs,
+          text: result.text,
+          languageCode: result.languageCode,
+          instruction:
+            "Pass wavPath as audioFile to run_browser_test to inject this as the browser's microphone input.",
+        });
+      } catch (err) {
+        logger.error({ err, projectId }, "synthesize_speech failed");
+        return text({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  );
+
+  const compare_transcript = tool(
+    "compare_transcript",
+    "Score a same-language transcript against the known source text (from synthesize_speech) with real word error rate (WER) — substitutions, deletions, insertions, and the overall error rate. Use this for validating original-language transcription accuracy. NOT for cross-language translation/subtitle checks (e.g. Arabic speech -> English subtitle) — a word-distance metric between two different languages is meaningless; judge meaning-preservation directly in your own reasoning for those instead.",
+    {
+      expectedText: z.string().describe("The known source text, e.g. what synthesize_speech returned as `text`"),
+      actualTranscript: z.string().describe("The transcript text actually observed in the app under test"),
+    },
+    async ({ expectedText, actualTranscript }) => {
+      const result = wordErrorRate(expectedText, actualTranscript);
+      return text(result);
     }
   );
 
@@ -1025,6 +1082,7 @@ export function buildProjectTools(
         // agent gets the exact missing headings back so it can fix them.
         const check = checkAgainstTemplate(docType, content, templateId);
         if (check && !check.ok) {
+          onDocumentValidationFailed?.();
           return text({
             error: `This ${check.templateName} is missing required sections and was NOT saved.`,
             missingSections: check.missing,
@@ -1166,6 +1224,8 @@ export function buildProjectTools(
       inspect_page,
       run_browser_test,
       run_api_test,
+      synthesize_speech,
+      compare_transcript,
       save_test_script,
       list_test_scripts,
       run_test_suite,
@@ -1206,6 +1266,8 @@ export const PROJECT_TOOL_NAMES = [
   "mcp__qa__inspect_page",
   "mcp__qa__run_browser_test",
   "mcp__qa__run_api_test",
+  "mcp__qa__synthesize_speech",
+  "mcp__qa__compare_transcript",
   "mcp__qa__save_test_script",
   "mcp__qa__list_test_scripts",
   "mcp__qa__run_test_suite",

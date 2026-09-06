@@ -153,6 +153,8 @@ model Message {
   content       String
   createdAt     DateTime @map("created_at")
   documentsJson String?  @map("documents_json")
+  modelUsed     String?  @map("model_used")
+  costUsd       Float?   @map("cost_usd")
 
   @@index([projectId], map: "idx_messages_project")
   @@map("messages")

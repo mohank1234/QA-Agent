@@ -238,7 +238,8 @@ export async function addMessage(
   projectId: string,
   role: "user" | "assistant",
   content: string,
-  documents?: MessageDocument[]
+  documents?: MessageDocument[],
+  modelInfo?: { modelUsed: string; costUsd: number }
 ): Promise<void> {
   await prisma.message.create({
     data: {
@@ -247,6 +248,8 @@ export async function addMessage(
       role,
       content,
       documentsJson: documents && documents.length > 0 ? JSON.stringify(documents) : null,
+      modelUsed: modelInfo?.modelUsed ?? null,
+      costUsd: modelInfo?.costUsd ?? null,
       createdAt: new Date().toISOString(),
     },
   });
@@ -255,7 +258,14 @@ export async function addMessage(
 export async function listMessages(projectId: string) {
   const rows = await prisma.message.findMany({
     where: { projectId },
-    select: { role: true, content: true, documentsJson: true, createdAt: true },
+    select: {
+      role: true,
+      content: true,
+      documentsJson: true,
+      createdAt: true,
+      modelUsed: true,
+      costUsd: true,
+    },
     orderBy: { createdAt: "asc" },
   });
   return rows.map((r) => ({
@@ -263,6 +273,8 @@ export async function listMessages(projectId: string) {
     content: r.content,
     created_at: r.createdAt.toISOString(),
     documents: r.documentsJson ? (JSON.parse(r.documentsJson) as MessageDocument[]) : [],
+    model_used: r.modelUsed,
+    cost_usd: r.costUsd,
   }));
 }
 

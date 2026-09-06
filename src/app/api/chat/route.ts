@@ -79,11 +79,15 @@ export async function POST(req: Request) {
 
   try {
     const result = await runAgentTurn(projectId, message);
-    await addMessage(projectId, "assistant", result.reply, result.documents);
+    await addMessage(projectId, "assistant", result.reply, result.documents, {
+      modelUsed: result.modelUsed,
+      costUsd: result.costUsd,
+    });
     trackEvent(access.userId, "chat_message_sent", {
       isGuest: access.isGuest,
       costUsd: result.costUsd,
       isError: result.isError,
+      modelUsed: result.modelUsed,
     });
     return NextResponse.json({
       reply: result.reply,

@@ -57,7 +57,8 @@ function buildHarness(
   script: string,
   evidenceDir: string,
   sessionStatePath: string | undefined,
-  saveSessionState: boolean
+  saveSessionState: boolean,
+  audioFile: string | undefined
 ): string {
   const navigate = url
     ? `{
@@ -80,6 +81,7 @@ const EVIDENCE_DIR = ${JSON.stringify(evidenceDir)};
 const VIDEO_DIR = path.join(EVIDENCE_DIR, "video");
 const SESSION_IN = ${sessionStatePath ? JSON.stringify(sessionStatePath) : "null"};
 const SESSION_OUT = ${saveSessionState ? JSON.stringify(path.join(evidenceDir, SESSION_STATE_FILE)) : "null"};
+const AUDIO_FILE = ${audioFile ? JSON.stringify(audioFile) : "null"};
 
 // Tagged at the throw, not sniffed from the message afterwards. This flag is
 // what separates "the app did the wrong thing" from "our locator was wrong",
@@ -97,7 +99,19 @@ function assert(condition, message) {
   fs.mkdirSync(VIDEO_DIR, { recursive: true });
 
   const consoleLines = [];
-  const browser = await chromium.launch();
+  // A synthesized WAV fed as the fake microphone, for tests that need the
+  // app under test to receive real (non-silent) audio via getUserMedia —
+  // e.g. verifying live transcription/translation against a known source
+  // text. This is a browser-LAUNCH flag, not a per-context setting: one
+  // browser process gets exactly one fake mic, fed from one file.
+  const LAUNCH_ARGS = AUDIO_FILE
+    ? [
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+        "--use-file-for-fake-audio-capture=" + AUDIO_FILE,
+      ]
+    : [];
+  const browser = await chromium.launch({ args: LAUNCH_ARGS });
   let passed = false;
   let errorMessage = null;
   let errorName = null;
@@ -174,6 +188,10 @@ function assert(condition, message) {
     if (SESSION_IN) baseOptions.storageState = SESSION_IN;
 
     context = await browser.newContext(baseOptions);
+    // --use-fake-ui-for-media-stream auto-accepts the permission prompt, but
+    // an explicit grant too means a script that navigates before checking
+    // mic access never races the prompt.
+    if (AUDIO_FILE) await context.grantPermissions(["microphone"]);
     // Registered before the first newPage() so page 1 is covered by it too.
     // Tags come from a counter rather than pages().length, which would
     // misnumber tabs once any of them is closed.
@@ -474,6 +492,8 @@ export async function runPlaywrightScript(
     saveSessionState?: boolean;
     /** Allow the long (background) ceiling instead of the request-safe one. */
     allowLongTimeout?: boolean;
+    /** Local WAV path to inject as a fake microphone via getUserMedia. */
+    audioFile?: string;
   } = {}
 ): Promise<AutomationResult> {
   assertBrowserAvailable();
@@ -495,7 +515,8 @@ export async function runPlaywrightScript(
         script,
         evidenceDir,
         options.sessionStatePath,
-        options.saveSessionState === true
+        options.saveSessionState === true,
+        options.audioFile
       ),
       timeoutMs
     );

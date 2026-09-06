@@ -50,6 +50,8 @@ export type ExecutableTest = {
   useSession?: string;
   /** Name to store this test's resulting session under. */
   saveSession?: string;
+  /** Browser tests only: local WAV path to inject as a fake microphone. */
+  audioFile?: string;
 };
 
 export type ExecutedTest = {
@@ -143,6 +145,7 @@ async function runOne(
         sessionStatePath: session?.path,
         saveSessionState: !!test.saveSession,
         allowLongTimeout,
+        audioFile: test.audioFile,
       });
 
       if (test.saveSession && savedSessionStatePath) {
