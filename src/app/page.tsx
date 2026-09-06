@@ -5,7 +5,7 @@ import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Pencil } from "lucide-react";
+import { Copy, Check, Pencil, Paperclip } from "lucide-react";
 import { DataTable, EmptyState, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
@@ -1419,9 +1419,9 @@ export default function Home() {
                     className="app-btn app-btn-ghost"
                     title="Attach a document or image"
                     aria-label="Attach a document or image"
-                    style={{ padding: "10px 11px", flexShrink: 0 }}
+                    style={{ padding: "10px 11px", flexShrink: 0, display: "flex", alignItems: "center" }}
                   >
-                    📎
+                    <Paperclip size={17} />
                   </button>
                   <textarea
                     ref={chatInputRef}
