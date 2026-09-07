@@ -5,7 +5,7 @@ import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Pencil, Paperclip } from "lucide-react";
+import { Copy, Check, Pencil, Paperclip, MoreVertical, Trash2 } from "lucide-react";
 import { DataTable, EmptyState, type ColumnDef } from "@/components/DataTable";
 
 type Project = {
@@ -191,6 +191,20 @@ const SIDEBAR_LABEL: React.CSSProperties = {
   marginBottom: 8,
 };
 
+const PROJECT_MENU_ITEM: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  padding: "8px 12px",
+  border: "none",
+  background: "transparent",
+  color: "var(--app-text)",
+  fontSize: 13,
+  textAlign: "left",
+  cursor: "pointer",
+};
+
 type DocumentFormat = {
   id: string;
   docType: "test_plan" | "test_strategy";
@@ -257,6 +271,10 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const projectMenuRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -392,6 +410,17 @@ export default function Home() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    if (!projectMenuId) return;
+    function onClickOutside(e: MouseEvent) {
+      if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
+        setProjectMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [projectMenuId]);
+
+  useEffect(() => {
     if (!selectedProjectId) return;
 
     // Guarded against the switch-projects race: clicking A then B fires two
@@ -403,6 +432,14 @@ export default function Home() {
     const projectId = selectedProjectId;
 
     void (async () => {
+      // Chat + documents first, on their own — this is what the default
+      // (Chat) tab actually needs to render. The other 7 artifact endpoints
+      // (requirements/scenarios/test cases/executions/bugs/benchmark/
+      // generated documents) are for tabs that aren't visible yet; racing
+      // all 9 requests together was measured to make even chat/documents
+      // queue behind them, turning a sub-second load into 15+ seconds. They
+      // still load automatically (so tab count badges stay accurate without
+      // requiring a click), just after, not blocking, the visible tab.
       try {
         const [chatRes, docsRes] = await Promise.all([
           fetch(`/api/chat?projectId=${projectId}`),
@@ -415,10 +452,9 @@ export default function Home() {
         setDocuments(docsData.documents ?? []);
       } catch {
         if (!cancelled) setError("Could not reach the server to load this project.");
+        return;
       }
-    })();
 
-    void (async () => {
       try {
         await refreshArtifacts(projectId, () => cancelled);
       } catch {
@@ -592,6 +628,38 @@ export default function Home() {
       }
     } catch {
       setError("Could not reach the server to delete the project.");
+    }
+  }
+
+  function startRenameProject(project: Project) {
+    setProjectMenuId(null);
+    setRenamingProjectId(project.id);
+    setRenameValue(project.name);
+  }
+
+  async function commitRenameProject(project: Project) {
+    const name = renameValue.trim();
+    if (!name || name === project.name) {
+      setRenamingProjectId(null);
+      return;
+    }
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects?projectId=${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to rename project.");
+        return;
+      }
+      setProjects((ps) => ps.map((p) => (p.id === project.id ? { ...p, name: data.project.name } : p)));
+    } catch {
+      setError("Could not reach the server to rename the project.");
+    } finally {
+      setRenamingProjectId(null);
     }
   }
 
@@ -782,6 +850,7 @@ export default function Home() {
             )}
             {projects.map((p) => {
               const active = p.id === selectedProjectId;
+              const isRenaming = renamingProjectId === p.id;
               return (
                 <div
                   key={p.id}
@@ -791,48 +860,104 @@ export default function Home() {
                     display: "flex",
                     alignItems: "center",
                     gap: 2,
+                    position: "relative",
                     background: active ? "var(--app-accent)" : "transparent",
                   }}
                 >
-                  <button
-                    onClick={() => {
-                      setSelectedProjectId(p.id);
-                      setActiveTab("chat");
-                    }}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      textAlign: "left",
-                      padding: "8px 10px",
-                      borderRadius: "var(--app-radius)",
-                      border: "none",
-                      cursor: "pointer",
-                      background: "transparent",
-                      color: active ? "var(--app-accent-text)" : "var(--app-text)",
-                      fontSize: 13.5,
-                      fontWeight: active ? 600 : 450,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {p.name}
-                  </button>
-                  <button
-                    onClick={() => handleDeleteProject(p)}
-                    title={`Delete "${p.name}"`}
-                    aria-label={`Delete project ${p.name}`}
-                    className="app-btn app-btn-ghost app-btn-danger"
-                    style={{
-                      padding: "4px 7px",
-                      marginRight: 4,
-                      fontSize: 15,
-                      lineHeight: 1,
-                      color: active ? "var(--app-accent-text)" : "var(--app-text-dim)",
-                    }}
-                  >
-                    ×
-                  </button>
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRenameProject(p);
+                        if (e.key === "Escape") setRenamingProjectId(null);
+                      }}
+                      onBlur={() => commitRenameProject(p)}
+                      className="app-input"
+                      style={{ flex: 1, minWidth: 0, margin: "4px 6px", padding: "5px 8px", fontSize: 13.5 }}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          setSelectedProjectId(p.id);
+                          setActiveTab("chat");
+                        }}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          borderRadius: "var(--app-radius)",
+                          border: "none",
+                          cursor: "pointer",
+                          background: "transparent",
+                          color: active ? "var(--app-accent-text)" : "var(--app-text)",
+                          fontSize: 13.5,
+                          fontWeight: active ? 600 : 450,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        onClick={() => setProjectMenuId(projectMenuId === p.id ? null : p.id)}
+                        title="Project options"
+                        aria-label={`Options for ${p.name}`}
+                        aria-haspopup="menu"
+                        aria-expanded={projectMenuId === p.id}
+                        className="app-btn app-btn-ghost"
+                        style={{
+                          padding: "4px 6px",
+                          marginRight: 4,
+                          display: "flex",
+                          color: active ? "var(--app-accent-text)" : "var(--app-text-dim)",
+                        }}
+                      >
+                        <MoreVertical size={15} />
+                      </button>
+                      {projectMenuId === p.id && (
+                        <div
+                          ref={projectMenuRef}
+                          role="menu"
+                          style={{
+                            position: "absolute",
+                            top: "100%",
+                            right: 4,
+                            zIndex: 20,
+                            marginTop: 2,
+                            minWidth: 150,
+                            background: "var(--app-surface)",
+                            border: "1px solid var(--app-border)",
+                            borderRadius: "var(--app-radius)",
+                            boxShadow: "var(--app-shadow-lg)",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <button
+                            role="menuitem"
+                            onClick={() => startRenameProject(p)}
+                            style={PROJECT_MENU_ITEM}
+                          >
+                            <Pencil size={14} /> Rename
+                          </button>
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setProjectMenuId(null);
+                              handleDeleteProject(p);
+                            }}
+                            style={{ ...PROJECT_MENU_ITEM, color: "var(--app-danger)" }}
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -867,8 +992,25 @@ export default function Home() {
         </div>
 
         {selectedProjectId && (
-          <div>
-            <div style={SIDEBAR_LABEL}>Documents</div>
+          <div style={{ borderLeft: "2px solid var(--app-border)", paddingLeft: 10, marginLeft: 2 }}>
+            <div
+              style={{
+                ...SIDEBAR_LABEL,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={selectedProject ? `Documents in ${selectedProject.name}` : undefined}
+            >
+              Documents
+              {selectedProject && (
+                <span style={{ textTransform: "none", fontWeight: 500, opacity: 0.75 }}>
+                  {" "}
+                  in{" "}
+                  <span style={{ color: "var(--app-text)" }}>{selectedProject.name}</span>
+                </span>
+              )}
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
               {documents.length === 0 && (
                 <span style={{ color: "var(--app-text-dim)" }}>None yet</span>

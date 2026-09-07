@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { listProjects, createProject, getProject } from "@/lib/db";
+import { listProjects, createProject, getProject, renameProject } from "@/lib/db";
 import { deleteProjectCompletely } from "@/lib/projectCleanup";
 import { getOrCreateGuestId, readGuestId } from "@/lib/guest";
 import { checkRateLimit, clientIp, rateLimitResponse } from "@/lib/rateLimit";
@@ -71,4 +71,33 @@ export async function DELETE(req: Request) {
 
   await deleteProjectCompletely(project.id);
   return NextResponse.json({ ok: true });
+}
+
+export async function PATCH(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const projectId = searchParams.get("projectId");
+  const project = projectId ? await getProject(projectId) : undefined;
+
+  const notFound = () => NextResponse.json({ error: "Unknown project." }, { status: 404 });
+  if (!project) return notFound();
+
+  const session = await auth();
+  if (session?.user) {
+    if (project.owner_id !== session.user.id) return notFound();
+  } else {
+    const guestId = await readGuestId();
+    if (!guestId || project.guest_id !== guestId) return notFound();
+  }
+
+  const body = await req.json().catch(() => null);
+  const parsed = CreateProjectSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid project name." },
+      { status: 400 }
+    );
+  }
+
+  const updated = await renameProject(project.id, parsed.data.name);
+  return NextResponse.json({ project: updated });
 }

@@ -165,6 +165,11 @@ export async function setProjectSessionId(projectId: string, sessionId: string):
   await prisma.project.update({ where: { id: projectId }, data: { sessionId } });
 }
 
+export async function renameProject(projectId: string, name: string): Promise<Project> {
+  const row = await prisma.project.update({ where: { id: projectId }, data: { name } });
+  return toProject(row);
+}
+
 export async function deleteProject(id: string): Promise<void> {
   await prisma.$transaction([
     prisma.document.deleteMany({ where: { projectId: id } }),
