@@ -2,10 +2,6 @@ import * as XLSX from "xlsx";
 import { prisma } from "../prisma";
 import { exportKey, putObject } from "../storage";
 
-function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
-
 function buildSheetBuffer(rows: Record<string, unknown>[], sheetName: string): Buffer {
   const sheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
@@ -205,7 +201,10 @@ export async function exportProjectArtifact(
     );
   }
 
-  const fileName = `${timestamp()}_${baseName}.xlsx`;
+  // No timestamp/version in the name: re-exporting the same kind just
+  // overwrites this project's one file at a stable, predictable URL instead
+  // of piling up a new timestamped object in storage on every export.
+  const fileName = `${baseName}.xlsx`;
   const key = exportKey(projectId, fileName);
   const buffer = buildSheetBuffer(rows, sheetName);
   await putObject(key, buffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

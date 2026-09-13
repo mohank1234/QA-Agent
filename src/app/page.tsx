@@ -262,7 +262,7 @@ function isImageFilename(name: string): boolean {
 }
 
 function downloadLinksFrom(text: string): string[] {
-  const matches = [...text.matchAll(/\/api\/(?:exports|generated-documents)\/[^\s")]+/g)];
+  const matches = [...text.matchAll(/\/api\/(?:exports|generated-documents)\/[^\s")`\]]+/g)];
   return matches.map((m) => m[0]).filter((link) => !link.endsWith("/preview"));
 }
 
@@ -2147,7 +2147,7 @@ function markdownComponents(linkColor: string): Components {
     p: ({ children }) => <p style={{ margin: "0 0 8px 0" }}>{children}</p>,
     strong: ({ children }) => <strong style={{ fontWeight: 650 }}>{children}</strong>,
     a: ({ children, href }) => (
-      <a href={href} style={{ color: linkColor, textDecoration: "underline" }}>
+      <a href={href?.replace(/`+$/, "")} style={{ color: linkColor, textDecoration: "underline" }}>
         {children}
       </a>
     ),

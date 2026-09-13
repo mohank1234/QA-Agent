@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ScheduledTask -TaskName \"QA-Agent-DevServer\" -ErrorAction SilentlyContinue)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" \"http://localhost:3000/api/exports/9cb70b52-d6bf-4065-950a-499d1c3db273/2026-09-13T05-44-33-965Z_test_scenarios.xlsx\")"
+    ]
+  }
+}
